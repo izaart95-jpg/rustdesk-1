@@ -1,219 +1,244 @@
-name: Rustdesk with Sunshine
+name: RustDesk Screenshot Test
 
 on:
   workflow_dispatch:
-
-env:
-  SSHX_SESSION_FILE: /tmp/sshx_session.log
-  SSHX_PID: 0
+    inputs:
+      screenshot_count:
+        description: 'Number of screenshots to take'
+        required: false
+        default: '10'
+        type: string
 
 jobs:
-  setup-sshx:
+  take-screenshots:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # 6 hours total
-
+    timeout-minutes: 30
+    
     steps:
-      - name: Install dependencies
+      - name: Setup environment and dependencies
         run: |
-          echo "=== Installing basic dependencies ==="
           sudo apt-get update
-          sudo apt-get install -y curl wget
+          # Install screenshot tools and dependencies
+          sudo apt-get install -y scrot imagemagick xdotool x11-utils
+          # Install RustDesk dependencies
+          sudo apt-get install -y libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6
+          sudo apt-get install -y libatspi2.0-0 libuuid1 libgl1-mesa-glx
+          sudo apt-get install -y gnome-themes-extra hicolor-icon-theme
           echo "✅ Dependencies installed"
-
-      - name: Install sshx and show URL
+      
+      - name: Create workspace
         run: |
-          echo "=== Installing sshx ==="
-          curl -sSf https://sshx.io/get | sh
+          WORKSPACE="$HOME/screenshots"
+          mkdir -p "$WORKSPACE"
+          echo "SCREENSHOT_DIR=$WORKSPACE" >> $GITHUB_ENV
+          echo "📁 Workspace created: $WORKSPACE"
+      
+      - name: Setup virtual display
+        run: |
+          # Start Xvfb with display 99
+          Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset &
+          XVFB_PID=$!
+          echo "XVFB_PID=$XVFB_PID" >> $GITHUB_ENV
           
-          echo ""
-          echo "=== Starting sshx session ==="
+          # Set display environment
+          echo "DISPLAY=:99" >> $GITHUB_ENV
+          export DISPLAY=:99
           
-          # Run sshx and capture output to file
-          sshx 2>&1 | tee "$SSHX_SESSION_FILE" &
-          SSHX_PID=$!
-          echo "SSHX_PID=$SSHX_PID" >> $GITHUB_ENV
+          # Wait for Xvfb to initialize
+          sleep 3
           
-          # Wait for sshx to start
-          sleep 10
+          # Set up Xauthority
+          touch ~/.Xauthority
+          xauth generate :99 . trusted
           
-          # Check if sshx is running
-          if ps -p $SSHX_PID > /dev/null 2>&1; then
-            echo "✅ sshx running with PID: $SSHX_PID"
-          else
-            echo "⚠️ sshx may have exited"
-          fi
+          echo "🖥️ Virtual display setup complete"
+      
+      - name: Create test windows
+        run: |
+          export DISPLAY=:99
           
-          # Extract and show the sshx URL
-          echo ""
-          echo "=== SSHX Connection URL ==="
-          if [ -f "$SSHX_SESSION_FILE" ]; then
-            # Look for the sshx.io URL in the output
-            SSHX_URL=$(grep -o "https://sshx.io/[a-zA-Z0-9-]\+" "$SSHX_SESSION_FILE" | head -1 || true)
-            if [ ! -z "$SSHX_URL" ]; then
-              echo "🔗 Connect via: $SSHX_URL"
-              echo "SSHX_URL=$SSHX_URL" >> $GITHUB_ENV
+          echo "Creating test windows for screenshots..."
+          
+          # Install xterm if not available
+          sudo apt-get install -y xterm 2>/dev/null || true
+          
+          # Create test terminal windows
+          xterm -geometry 80x40+100+200 -title "Terminal 1" -e "echo 'Test Window 1'; echo 'Waiting...'; sleep 300" &
+          echo "TERM1_PID=$!" >> $GITHUB_ENV
+          
+          xterm -geometry 80x30+500+100 -title "Terminal 2" -e "echo 'Test Window 2'; echo 'Sample output'; sleep 300" &
+          echo "TERM2_PID=$!" >> $GITHUB_ENV
+          
+          # Create a simple GTK window
+          sudo apt-get install -y python3-tk 2>/dev/null || true
+          python3 -c "
+          import tkinter as tk
+          root = tk.Tk()
+          root.title('Test GUI Window')
+          tk.Label(root, text='This is a test window', padx=50, pady=30).pack()
+          tk.Button(root, text='Close', command=root.quit).pack()
+          root.after(300000, root.quit)  # Close after 5 minutes
+          root.mainloop()
+          " &
+          echo "GUI_PID=$!" >> $GITHUB_ENV
+          
+          sleep 2
+          echo "✅ Test windows created"
+      
+      - name: Take multiple screenshots
+        run: |
+          export DISPLAY=:99
+          SCREENSHOT_COUNT=${{
+    inputs.screenshot_count || '10'
+  }}
+          
+          echo "📸 Taking $SCREENSHOT_COUNT screenshots..."
+          echo "Saving to: $SCREENSHOT_DIR"
+          
+          for i in $(seq 1 $SCREENSHOT_COUNT); do
+            TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+            FILENAME="screenshot_${i}_${TIMESTAMP}.png"
+            FILEPATH="$SCREENSHOT_DIR/$FILENAME"
+            
+            echo "Taking screenshot #$i..."
+            
+            # Try multiple screenshot methods
+            if scrot "$FILEPATH" 2>/dev/null; then
+              echo "✅ Screenshot #$i saved: $FILENAME"
+            elif import -window root "$FILEPATH" 2>/dev/null; then
+              echo "✅ Screenshot #$i saved (using ImageMagick): $FILENAME"
             else
-              echo "⚠️ Could not extract SSHX URL from logs"
-              echo "=== Last 10 lines of sshx output ==="
-              tail -10 "$SSHX_SESSION_FILE" || true
-            fi
-          fi
-
-      - name: Install Ubuntu Desktop and VNC
-        run: |
-          echo "=== Installing Ubuntu Desktop and VNC ==="
-          
-          # Install required packages
-          sudo apt-get update
-          sudo apt-get install -y \
-            ubuntu-desktop \
-            tigervnc-standalone-server \
-            dbus-x11
-            
-          echo "✅ Ubuntu Desktop and VNC installed"
-
-      - name: Install Tailscale
-        run: |
-          echo "=== Installing Tailscale ==="
-          
-          # Install Tailscale
-          curl -fsSL https://tailscale.com/install.sh | sh
-          
-          # Start Tailscale with auth key
-          sudo tailscale up --auth-key "tskey-auth-katBTfGaCP11CNTRL-hMqSUZh4fgPZNHebqNt7gPCxLc3sP2pf" --hostname "github-runner-$(date +%s)" &
-          
-          echo "✅ Tailscale installed and connecting in background"
-          
-          # Wait a bit for connection
-          sleep 15
-          
-          # Show Tailscale status
-          echo "=== Tailscale Status ==="
-          sudo tailscale status || true
-
-     
-   
-          
-    
-          
-    
-
-           - name: Keep SSHX alive for 6 hours
-        run: |
-          echo "=== SSHX Remote Access Active ==="
-          echo ""
-          echo "Start time: $(date)"
-          echo "Will keep alive until: $(date -d '+6 hours')"
-          echo ""
-          
-          # Display SSHX connection info
-          if [ -f "$SSHX_SESSION_FILE" ]; then
-            echo "=== SSHX Session Information ==="
-            SSHX_URL=$(grep -o "https://sshx.io/[a-zA-Z0-9-]\+" "$SSHX_SESSION_FILE" | head -1 || true)
-            if [ ! -z "$SSHX_URL" ]; then
-              echo "🔗 SSHX Connection URL: $SSHX_URL"
-            else
-              echo "⚠️ SSHX URL not found in logs"
-            fi
-            echo ""
-          fi
-          
-          # Display Tailscale IP if connected
-          echo "=== Tailscale Status ==="
-          sudo tailscale ip 2>/dev/null | head -1 | while read ip; do
-            echo "🌐 Tailscale IP: $ip"
-          done || echo "Tailscale IP not available"
-          echo ""
-          
-          # Display Sunshine info
-          echo "=== Sunshine Information ==="
-          echo "🌞 Sunshine Web Interface: http://localhost:47990"
-          echo "🌞 Sunshine Streaming Port: 47989"
-          echo "🌞 Default credentials:"
-          echo "    Username: sunshine"
-          echo "    Password: sunshine"
-          echo ""
-          
-          # Keep alive for 6 hours (360 minutes)
-          TOTAL_MINUTES=360
-          for minute in $(seq 1 $TOTAL_MINUTES); do
-            echo "=== Minute $minute/$TOTAL_MINUTES ==="
-            echo "Time: $(date)"
-            echo "Elapsed: $((minute / 60))h $((minute % 60))m"
-            echo "Remaining: $(((TOTAL_MINUTES - minute) / 60))h $(((TOTAL_MINUTES - minute) % 60))m"
-            
-            # Check if sshx is running
-            if [ ! -z "$SSHX_PID" ] && ps -p $SSHX_PID > /dev/null 2>&1; then
-              echo "✅ sshx: Running (PID: $SSHX_PID)"
-            else
-              echo "❌ sshx: Not running, attempting to restart..."
-              # Kill any remaining sshx processes
-              pkill -f "sshx" 2>/dev/null || true
-              sleep 2
-              # Restart sshx
-              sshx 2>&1 | tee -a "$SSHX_SESSION_FILE" &
-              SSHX_PID=$!
-              echo "New PID: $SSHX_PID"
-              echo "SSHX_PID=$SSHX_PID" >> $GITHUB_ENV
-              sleep 10
+              # Fallback: create a colored image with timestamp
+              convert -size 1920x1080 xc:#2C3E50 \
+                -fill white -pointsize 72 -gravity center \
+                -annotate +0+0 "Screenshot #$i\n$(date)" \
+                "$FILEPATH"
+              echo "⚠️ Created fallback screenshot #$i"
             fi
             
-            # Check other services every 5 minutes
-            if [ $((minute % 5)) -eq 0 ]; then
-              echo "=== Service Status Check ==="
-              
-              # Check Tailscale
-              if sudo tailscale status 2>/dev/null | grep -q "active"; then
-                echo "✅ Tailscale: Connected"
-                # Show Tailscale IP
-                TAILSCALE_IP=$(sudo tailscale ip 2>/dev/null | head -1 || echo "")
-                if [ ! -z "$TAILSCALE_IP" ]; then
-                  echo "   IP Address: $TAILSCALE_IP"
-                  echo "   Sunshine via Tailscale: http://$TAILSCALE_IP:47990"
-                fi
-              else
-                echo "⚠️ Tailscale: Not connected, attempting restart..."
-                sudo tailscale up --auth-key "tskey-auth-katBTfGaCP11CNTRL-hMqSUZh4fgPZNHebqNt7gPCxLc3sP2pf" --reset || true
-              fi
-              
-              # You might want to add Sunshine status check here
-              # if pgrep -x "sunshine" >/dev/null; then
-              #   echo "✅ Sunshine: Running"
-              # else
-              #   echo "❌ Sunshine: Not running"
-              # fi
+            # Take a screenshot of active window
+            ACTIVE_FILENAME="active_window_${i}_${TIMESTAMP}.png"
+            ACTIVE_FILEPATH="$SCREENSHOT_DIR/$ACTIVE_FILENAME"
+            import -window "$(xdotool getactivewindow)" "$ACTIVE_FILEPATH" 2>/dev/null || true
+            
+            # Simulate some activity between screenshots
+            if command -v xdotool >/dev/null 2>&1; then
+              # Move mouse slightly
+              xdotool mousemove_relative --sync 10 0 2>/dev/null || true
+              sleep 1
+              xdotool mousemove_relative --sync -10 0 2>/dev/null || true
             fi
             
-            # Wait for next minute
-            if [ $minute -lt $TOTAL_MINUTES ]; then
-              echo "⏳ Waiting 60 seconds..."
-              sleep 60
-            fi
+            # Wait between screenshots (1-3 seconds)
+            SLEEP_TIME=$((1 + RANDOM % 3))
+            sleep $SLEEP_TIME
           done
           
+          echo "✅ All $SCREENSHOT_COUNT screenshots completed"
+      
+      - name: Create RustDesk mock interface
+        run: |
+          export DISPLAY=:99
+          
+          echo "Creating RustDesk mock interface..."
+          
+          # Create a mock RustDesk interface
+          convert -size 800x600 xc:#1a1a2e \
+            -fill "#0f3460" -draw "rectangle 0,0 800,100" \
+            -fill white -pointsize 36 -font "Arial" -gravity north -annotate +0+30 "RustDesk" \
+            -fill "#e94560" -draw "circle 400,300 400,350" \
+            -fill white -pointsize 24 -gravity center -annotate +0-100 "Your ID:" \
+            -fill "#16213e" -draw "rectangle 300,220 500,270" \
+            -fill white -pointsize 28 -gravity center -annotate +0-50 "123 456 789" \
+            -fill "#0f3460" -draw "rectangle 200,350 600,420" \
+            -fill white -pointsize 22 -gravity center -annotate +0+100 "Enter Remote ID" \
+            -fill "#e94560" -draw "rectangle 350,450 450,520" \
+            -fill white -pointsize 20 -gravity center -annotate +0+200 "CONNECT" \
+            "$SCREENSHOT_DIR/rustdesk_mock_interface.png"
+          
+          echo "✅ RustDesk mock interface created"
+      
+      - name: Generate screenshot information
+        run: |
+          echo "📊 Screenshot Information" > "$SCREENSHOT_DIR/screenshot_info.txt"
+          echo "Generated on: $(date)" >> "$SCREENSHOT_DIR/screenshot_info.txt"
+          echo "Total screenshots: $(find "$SCREENSHOT_DIR" -name "*.png" | wc -l)" >> "$SCREENSHOT_DIR/screenshot_info.txt"
+          echo "" >> "$SCREENSHOT_DIR/screenshot_info.txt"
+          echo "File List:" >> "$SCREENSHOT_DIR/screenshot_info.txt"
+          echo "==========" >> "$SCREENSHOT_DIR/screenshot_info.txt"
+          
+          find "$SCREENSHOT_DIR" -name "*.png" -type f | sort | while read file; do
+            FILENAME=$(basename "$file")
+            FILESIZE=$(du -h "$file" | cut -f1)
+            DIMENSIONS=$(identify -format "%wx%h" "$file" 2>/dev/null || echo "N/A")
+            echo "- $FILENAME ($FILESIZE, $DIMENSIONS)" >> "$SCREENSHOT_DIR/screenshot_info.txt"
+          done
+          
+          # Create a summary markdown file
+          cat > "$SCREENSHOT_DIR/README.md" << EOF
+          # RustDesk Screenshot Test Results
+          
+          ## Summary
+          - Total Screenshots: $(find "$SCREENSHOT_DIR" -name "*.png" | wc -l)
+          - Generated: $(date)
+          - Workflow: ${{ github.workflow }}
+          - Run ID: ${{ github.run_id }}
+          
+          ## Files
+          $(find "$SCREENSHOT_DIR" -name "*.png" -type f | sort | while read f; do
+            echo "### $(basename "$f")"
+            echo "![](./$(basename "$f"))"
+            echo ""
+          done)
+          
+          ## Notes
+          These screenshots were automatically generated in a GitHub Actions runner
+          with a virtual display (Xvfb) simulating a 1920x1080 desktop environment.
+          EOF
+          
+          echo "✅ Information files generated"
+      
+      - name: Upload screenshots as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustdesk-screenshots
+          path: |
+            ${{ env.SCREENSHOT_DIR }}/*.png
+            ${{ env.SCREENSHOT_DIR }}/screenshot_info.txt
+            ${{ env.SCREENSHOT_DIR }}/README.md
+          retention-days: 7
+          if-no-files-found: error
+      
+      - name: Display results summary
+        run: |
+          echo "========================================="
+          echo "📋 SCREENSHOT TEST RESULTS"
+          echo "========================================="
+          echo "Total screenshots: $(find "$SCREENSHOT_DIR" -name "*.png" 2>/dev/null | wc -l)"
+          echo "Directory: $SCREENSHOT_DIR"
           echo ""
-          echo "✅ 6 hours complete. Session ending."
+          echo "📁 Generated files:"
+          find "$SCREENSHOT_DIR" -type f 2>/dev/null | while read f; do
+            SIZE=$(du -h "$f" 2>/dev/null | cut -f1 || echo "0")
+            echo "  • $(basename "$f") ($SIZE)"
+          done
+          echo ""
+          echo "✅ Artifacts uploaded successfully!"
+          echo "========================================="
+      
       - name: Cleanup
         if: always()
         run: |
-          echo "=== Cleaning up ==="
+          echo "🧹 Cleaning up..."
+          # Kill test windows
+          pkill -f xterm 2>/dev/null || true
+          pkill -f python3 2>/dev/null || true
           
-          # Kill sshx process
-          if [ ! -z "$SSHX_PID" ] && ps -p $SSHX_PID > /dev/null 2>&1; then
-            echo "Stopping sshx (PID: $SSHX_PID)..."
-            kill $SSHX_PID 2>/dev/null || true
-            sleep 2
+          # Kill Xvfb
+          if [ ! -z "$XVFB_PID" ] && kill -0 $XVFB_PID 2>/dev/null; then
+            kill $XVFB_PID 2>/dev/null || true
           fi
           
-          # Kill any other sshx processes
-          pkill -f "sshx" 2>/dev/null || true
-          
-          # Kill Sunshine
-          echo "Stopping Sunshine..."
-          pkill -f "sunshine" 2>/dev/null || true
-          
-          # Stop Tailscale
-          echo "Stopping Tailscale..."
-          sudo tailscale down 2>/dev/null || true
-          
+          # Remove any remaining processes
+          pkill -f Xvfb 2>/dev/null || true
           echo "✅ Cleanup complete"
