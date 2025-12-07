@@ -1,4 +1,4 @@
-name: SSHX Remote Access with Sunshine
+name: Rustdesk with Sunshine
 
 on:
   workflow_dispatch:
@@ -68,8 +68,7 @@ jobs:
           sudo apt-get install -y \
             ubuntu-desktop \
             tigervnc-standalone-server \
-            dbus-x11 \
-           
+            dbus-x11
             
           echo "✅ Ubuntu Desktop and VNC installed"
 
@@ -92,7 +91,41 @@ jobs:
           echo "=== Tailscale Status ==="
           sudo tailscale status || true
 
- 
+      - name: Install Sunshine
+        run: |
+          echo "=== Installing Sunshine ==="
+          
+          # Download Sunshine
+          SUNSHINE_URL="https://github.com/LizardByte/Sunshine/releases/download/v2025.924.154138/sunshine-ubuntu-24.04-amd64.deb"
+          SUNSHINE_DEB="sunshine.deb"
+          
+          echo "Downloading Sunshine from: $SUNSHINE_URL"
+          wget -O "$SUNSHINE_DEB" "$SUNSHINE_URL"
+          
+          echo "Installing Sunshine..."
+          sudo apt install -y "./$SUNSHINE_DEB"
+          
+          # Install dependencies that Sunshine might need
+          sudo apt install -y libboost-thread1.74.0 libboost-log1.74.0 libboost-config1.74.0 \
+            libboost-filesystem1.74.0 libboost-chrono1.74.0 libboost-atomic1.74.0 \
+            libavcodec60 libavformat60 libavutil58 libswscale7 libswresample4 \
+            libopus0 libnuma1 libmfx1 libva-drm2 libva-x11-2 libva2
+          
+          echo "✅ Sunshine installed"
+          
+          echo "=== Starting Sunshine ==="
+          # Start Sunshine in background
+          sunshine &
+          SUNSHINE_PID=$!
+          echo "Sunshine PID: $SUNSHINE_PID"
+          echo "SUNSHINE_PID=$SUNSHINE_PID" >> $GITHUB_ENV
+          
+          # Wait for Sunshine to start
+          sleep 5
+          
+          echo "Sunshine should now be running on:"
+          echo "  - Web interface: http://localhost:47990"
+          echo "  - Streaming port: 47989"
 
       - name: Keep SSHX alive for 6 hours
         run: |
@@ -119,6 +152,15 @@ jobs:
           sudo tailscale ip 2>/dev/null | head -1 | while read ip; do
             echo "🌐 Tailscale IP: $ip"
           done || echo "Tailscale IP not available"
+          echo ""
+          
+          # Display Sunshine info
+          echo "=== Sunshine Information ==="
+          echo "🌞 Sunshine Web Interface: http://localhost:47990"
+          echo "🌞 Sunshine Streaming Port: 47989"
+          echo "🌞 Default credentials:"
+          echo "    Username: sunshine"
+          echo "    Password: sunshine"
           echo ""
           
           # Keep alive for 6 hours (360 minutes)
@@ -152,16 +194,32 @@ jobs:
               # Check Tailscale
               if sudo tailscale status 2>/dev/null | grep -q "active"; then
                 echo "✅ Tailscale: Connected"
+                # Show Tailscale IP
+                TAILSCALE_IP=$(sudo tailscale ip 2>/dev/null | head -1 || echo "")
+                if [ ! -z "$TAILSCALE_IP" ]; then
+                  echo "   IP Address: $TAILSCALE_IP"
+                  echo "   Sunshine via Tailscale: http://$TAILSCALE_IP:47990"
+                fi
               else
                 echo "⚠️ Tailscale: Not connected, attempting restart..."
                 sudo tailscale up --auth-key "tskey-auth-katBTfGaCP11CNTRL-hMqSUZh4fgPZNHebqNt7gPCxLc3sP2pf" --reset || true
               fi
               
-              # Check Sunshine (if installed)
-              if systemctl is-active --quiet sunshine 2>/dev/null; then
-                echo "✅ Sunshine: Running"
+              # Check Sunshine
+              if ps -p $SUNSHINE_PID > /dev/null 2>&1; then
+                echo "✅ Sunshine: Running (PID: $SUNSHINE_PID)"
+                echo "   Web Interface: http://localhost:47990"
+                echo "   Streaming: port 47989"
               else
-                echo "⚠️ Sunshine: Not running (or not installed)"
+                echo "⚠️ Sunshine: Not running, attempting restart..."
+                # Kill any remaining sunshine processes
+                pkill -f "sunshine" 2>/dev/null || true
+                sleep 2
+                # Restart Sunshine
+                sunshine &
+                SUNSHINE_PID=$!
+                echo "SUNSHINE_PID=$SUNSHINE_PID" >> $GITHUB_ENV
+                sleep 5
               fi
             fi
             
@@ -189,6 +247,10 @@ jobs:
           
           # Kill any other sshx processes
           pkill -f "sshx" 2>/dev/null || true
+          
+          # Kill Sunshine
+          echo "Stopping Sunshine..."
+          pkill -f "sunshine" 2>/dev/null || true
           
           # Stop Tailscale
           echo "Stopping Tailscale..."
