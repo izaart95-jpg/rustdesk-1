@@ -1,0 +1,145 @@
+name: Rustdesk with Sunshine
+
+on:
+  workflow_dispatch:
+
+env:
+  SSHX_SESSION_FILE: /tmp/sshx_session.log
+  SSHX_PID: 0
+
+jobs:
+  setup-sshx:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # 6 hours total
+
+    steps:
+      - name: Install dependencies
+        run: |
+          echo "=== Installing basic dependencies ==="
+          sudo apt-get update
+          sudo apt-get install -y curl wget ubuntu-desktop dbus-x11
+          echo "✅ Dependencies installed"
+
+      - name: Install sshx and show URL
+        run: |
+          echo "=== Installing sshx ==="
+          curl -sSf https://sshx.io/get | sh
+          
+          echo ""
+          echo "=== Starting sshx session ==="
+          
+          # Run sshx and capture output to file
+          sshx 2>&1 | tee "$SSHX_SESSION_FILE" &
+          SSHX_PID=$!
+          echo "SSHX_PID=$SSHX_PID" >> $GITHUB_ENV
+          
+          # Wait for sshx to start
+          sleep 10
+          
+          # Check if sshx is running
+          if ps -p $SSHX_PID > /dev/null 2>&1; then
+            echo "✅ sshx running with PID: $SSHX_PID"
+          else
+            echo "⚠️ sshx may have exited"
+          fi
+          
+          # Extract and show the sshx URL
+          echo ""
+          echo "=== SSHX Connection URL ==="
+          if [ -f "$SSHX_SESSION_FILE" ]; then
+            # Look for the sshx.io URL in the output
+            SSHX_URL=$(grep -o "https://sshx.io/[a-zA-Z0-9-]\+" "$SSHX_SESSION_FILE" | head -1 || true)
+            if [ ! -z "$SSHX_URL" ]; then
+              echo "🔗 Connect via: $SSHX_URL"
+              echo "SSHX_URL=$SSHX_URL" >> $GITHUB_ENV
+            else
+              echo "⚠️ Could not extract SSHX URL from logs"
+              echo "=== Last 10 lines of sshx output ==="
+              tail -10 "$SSHX_SESSION_FILE" || true
+            fi
+          fi
+          - name: Keep SSHX alive for 6 hours
+        run: |
+          echo "=== SSHX Remote Access Active ==="
+          echo ""
+          echo "Start time: $(date)"
+          echo "Will keep alive until: $(date -d '+6 hours')"
+          echo ""
+          
+          # Display SSHX connection info
+          if [ -f "$SSHX_SESSION_FILE" ]; then
+            echo "=== SSHX Session Information ==="
+            SSHX_URL=$(grep -o "https://sshx.io/[a-zA-Z0-9-]\+" "$SSHX_SESSION_FILE" | head -1 || true)
+            if [ ! -z "$SSHX_URL" ]; then
+              echo "🔗 SSHX Connection URL: $SSHX_URL"
+            else
+              echo "⚠️ SSHX URL not found in logs"
+            fi
+            echo ""
+          fi
+          
+         
+          
+          # Display Sunshine info
+          echo "=== Sunshine Information ==="
+          echo "🌞 Sunshine Web Interface: http://localhost:47990"
+          echo "🌞 Sunshine Streaming Port: 47989"
+          echo "🌞 Default credentials:"
+          echo "    Username: sunshine"
+          echo "    Password: sunshine"
+          echo ""
+          
+          # Keep alive for 6 hours (360 minutes)
+          TOTAL_MINUTES=360
+          for minute in $(seq 1 $TOTAL_MINUTES); do
+            echo "=== Minute $minute/$TOTAL_MINUTES ==="
+            echo "Time: $(date)"
+            echo "Elapsed: $((minute / 60))h $((minute % 60))m"
+            echo "Remaining: $(((TOTAL_MINUTES - minute) / 60))h $(((TOTAL_MINUTES - minute) % 60))m"
+            
+            # Check if sshx is running
+            if [ ! -z "$SSHX_PID" ] && ps -p $SSHX_PID > /dev/null 2>&1; then
+              echo "✅ sshx: Running (PID: $SSHX_PID)"
+            else
+              echo "❌ sshx: Not running, attempting to restart..."
+              # Kill any remaining sshx processes
+              pkill -f "sshx" 2>/dev/null || true
+              sleep 2
+              # Restart sshx
+              sshx 2>&1 | tee -a "$SSHX_SESSION_FILE" &
+              SSHX_PID=$!
+              echo "New PID: $SSHX_PID"
+              echo "SSHX_PID=$SSHX_PID" >> $GITHUB_ENV
+              sleep 10
+            fi
+            
+        
+            
+            # Wait for next minute
+            if [ $minute -lt $TOTAL_MINUTES ]; then
+              echo "⏳ Waiting 60 seconds..."
+              sleep 60
+            fi
+          done
+          
+          echo ""
+          echo "✅ 6 hours complete. Session ending."
+
+      - name: Cleanup
+        if: always()
+        run: |
+          echo "=== Cleaning up ==="
+          
+          # Kill sshx process
+          if [ ! -z "$SSHX_PID" ] && ps -p $SSHX_PID > /dev/null 2>&1; then
+            echo "Stopping sshx (PID: $SSHX_PID)..."
+            kill $SSHX_PID 2>/dev/null || true
+            sleep 2
+          fi
+          
+          # Kill any other sshx processes
+          pkill -f "sshx" 2>/dev/null || true
+          
+         
+          
+          echo "✅ Cleanup complete"
