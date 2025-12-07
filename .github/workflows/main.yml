@@ -1,170 +1,123 @@
-name: RustDesk Screenshot
+name: SSHX Remote Access with Screenshots
 
 on:
   workflow_dispatch:
 
 jobs:
-  rustdesk-screenshot:
-    runs-on: ubuntu-latest
-    timeout-minutes: 340  # 24 hours
+  setup-sshx:
+    runs-on: macos-latest
+    timeout-minutes: 25  # 5 minutes setup + 20 minutes keepalive
 
     steps:
-      - name: Update and install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y wget unzip xvfb scrot imagemagick xdotool
-          echo "Dependencies installed"
       
-      - name: Download RustDesk
+      - name: Install sshx
         run: |
-          RUSTDESK_URL="https://github.com/rustdesk/rustdesk/releases/download/1.4.4/rustdesk-1.4.4-x86_64.AppImage"
-          RUSTDESK_PATH="/tmp/rustdesk.AppImage"
-          wget -O "$RUSTDESK_PATH" "$RUSTDESK_URL"
-          chmod +x "$RUSTDESK_PATH"
-          echo "RUSTDESK_PATH=$RUSTDESK_PATH" >> $GITHUB_ENV
-          echo "RustDesk downloaded"
-      
-      - name: Create working directory
+          echo "=== Installing sshx ==="
+          curl -sSf https://sshx.io/get | sh
+          echo "✅ sshx installed"
+
+      - name: Run sshx in background
         run: |
-          WORK_DIR="$HOME/screenshots"
-          mkdir -p "$WORK_DIR"
-          echo "WORK_DIR=$WORK_DIR" >> $GITHUB_ENV
-          echo "Working directory created: $WORK_DIR"
-      
-      - name: Setup virtual display and start RustDesk
+          echo "=== Starting sshx session ==="
+          
+          # Run sshx in background and capture output
+          sshx 2>&1 | tee "$SSHX_SESSION_FILE" &
+          SSHX_PID=$!
+          echo "SSHX_PID=$SSHX_PID" >> $GITHUB_ENV
+          
+          # Wait a moment for sshx to start
+          sleep 8
+          
+          # Check if sshx is running
+          if ps -p $SSHX_PID > /dev/null 2>&1; then
+            echo "✅ sshx running with PID: $SSHX_PID"
+          else
+            echo "⚠️ sshx may have exited"
+          fi
+          
+          # Show session info
+          echo ""
+          echo "=== SSHX Session Info ==="
+          if [ -f "$SSHX_SESSION_FILE" ]; then
+            cat "$SSHX_SESSION_FILE" | grep -i -A2 -B2 "connect\|join\|session\|http\|link\|url" || true
+          fi
+          
+
+ 
+      - name: Keep alive for 20 minutes
         run: |
-          # Start Xvfb (virtual framebuffer)
-          export DISPLAY=:99
-          Xvfb :99 -screen 0 1920x1080x24 &
-          XVFB_PID=$!
-          echo "XVFB_PID=$XVFB_PID" >> $GITHUB_ENV
+          echo "=== SSHX Remote Access Active ==="
+          echo ""
+          echo "Start time: $(date)"
+          echo "Will keep alive until: $(date -v+20M)"
+          echo ""
           
-          # Wait for Xvfb to start
-          sleep 3
+          # Display session info if available
+          if [ -f "$SSHX_SESSION_FILE" ]; then
+            echo "=== Session Information ==="
+            cat "$SSHX_SESSION_FILE" | grep -i "connect\|join\|session\|http\|link\|url" | head -5 || true
+            echo ""
+          fi
           
-          # Start RustDesk in background
-          $RUSTDESK_PATH &
-          RUSTDESK_PID=$!
-          echo "RUSTDESK_PID=$RUSTDESK_PID" >> $GITHUB_ENV
-          echo "RustDesk started with PID: $RUSTDESK_PID"
-          
-          # Give RustDesk time to initialize
-          sleep 15
-          
-          # List processes to verify
-          ps aux | grep rustdesk
-      
-      - name: Take screenshots
-        run: |
-          export DISPLAY=:99
-          cd "$WORK_DIR"
-          
-          # Take multiple screenshots
-          for i in {1..3}; do
-            echo "Taking screenshot $i..."
-            SCREENSHOT_PATH="$WORK_DIR/screenshot_$i.png"
-            scrot "$SCREENSHOT_PATH"
+          # Keep alive for 20 minutes
+          for minute in {1..20}; do
+            echo "=== Minute $minute/20 ==="
+            echo "Time: $(date)"
             
-            if [ -f "$SCREENSHOT_PATH" ]; then
-              echo "Screenshot saved: $SCREENSHOT_PATH"
-              # Display screenshot info
-              identify "$SCREENSHOT_PATH"
+            # Check if sshx is running
+            if ps -p $SSHX_PID > /dev/null 2>&1; then
+              echo "✅ sshx: Running (PID: $SSHX_PID)"
             else
-              echo "Failed to save screenshot $i"
+              echo "❌ sshx: Not running, attempting to restart..."
+              # Kill any remaining sshx processes
+              pkill -f "sshx" 2>/dev/null || true
+              sleep 2
+              # Restart sshx
+              sshx 2>&1 | tee -a "$SSHX_SESSION_FILE" &
+              SSHX_PID=$!
+              echo "New PID: $SSHX_PID"
+              sleep 5
             fi
             
-            sleep 2
+            # Take screenshot every 2 minutes
+            if [ $((minute % 2)) -eq 0 ]; then
+              timestamp=$(date +%Y%m%d_%H%M%S)
+              screenshot_file="$SCREENSHOT_DIR/periodic_${timestamp}.png"
+              echo "📸 Taking screenshot..."
+              sudo screencapture -x "$screenshot_file" 2>/dev/null || true
+              
+              if [ -f "$screenshot_file" ] && [ -s "$screenshot_file" ]; then
+                size=$(ls -lh "$screenshot_file" | awk '{print $5}')
+                echo "   Saved: $(basename "$screenshot_file") (${size})"
+              fi
+            fi
+            
+            # Wait for next minute
+            if [ $minute -lt 20 ]; then
+              remaining=$((20 - minute))
+              echo "⏳ Remaining: ${remaining} minutes"
+              sleep 60
+            fi
           done
           
-          # Try to capture RustDesk window specifically
-          echo "Attempting to capture RustDesk window..."
-          xdotool search --name "RustDesk" windowsize 800 600
-          sleep 1
-          scrot -u "$WORK_DIR/rustdesk_window.png" 2>/dev/null || echo "Could not capture specific window"
-      
-      - name: Take alternative screenshots using import
-        run: |
-          export DISPLAY=:99
-          cd "$WORK_DIR"
-          
-          # Use ImageMagick's import command
-          echo "Taking screenshot with ImageMagick..."
-          import -window root "$WORK_DIR/imagemagick_screenshot.png"
-          
-          # Check if file was created
-          if [ -f "$WORK_DIR/imagemagick_screenshot.png" ]; then
-            echo "ImageMagick screenshot saved successfully"
-            ls -la "$WORK_DIR/imagemagick_screenshot.png"
-          fi
-      
-      - name: Verify and list screenshots
-        run: |
-          echo "Current directory: $(pwd)"
-          echo "Looking for screenshots in: $WORK_DIR"
-          ls -la "$WORK_DIR/"
-          
-          SCREENSHOTS_COUNT=$(ls "$WORK_DIR"/*.png 2>/dev/null | wc -l)
-          if [ "$SCREENSHOTS_COUNT" -eq 0 ]; then
-            echo "No PNG files found in $WORK_DIR"
-            echo "Checking other locations..."
-            find /tmp -name "*.png" -type f 2>/dev/null | head -10
-          else
-            echo "Found $SCREENSHOTS_COUNT screenshots:"
-            ls -la "$WORK_DIR"/*.png
-          fi
-      
-      - name: Upload screenshots as artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: rustdesk-screenshots-ubuntu
-          path: |
-            ${{ env.WORK_DIR }}/*.png
-          retention-days: 1
-      
-      - name: Cleanup processes
+          echo ""
+          echo "✅ 20 minutes complete."
+
+     
+
+      - name: Cleanup
         if: always()
         run: |
-          echo "Cleaning up processes..."
-          # Kill RustDesk if running
-          if [ ! -z "$RUSTDESK_PID" ] && ps -p $RUSTDESK_PID > /dev/null 2>&1; then
-            kill $RUSTDESK_PID 2>/dev/null || true
-            echo "RustDesk process stopped"
+          echo "=== Cleaning up ==="
+          
+          # Kill sshx process
+          if [ ! -z "$SSHX_PID" ] && ps -p $SSHX_PID > /dev/null 2>&1; then
+            echo "Stopping sshx (PID: $SSHX_PID)..."
+            kill $SSHX_PID 2>/dev/null || true
+            sleep 2
           fi
           
-          # Kill Xvfb if running
-          if [ ! -z "$XVFB_PID" ] && ps -p $XVFB_PID > /dev/null 2>&1; then
-            kill $XVFB_PID 2>/dev/null || true
-            echo "Xvfb process stopped"
-          fi
+          # Kill any other sshx processes
+          pkill -f "sshx" 2>/dev/null || true
           
-          # Clean up any remaining processes
-          pkill -f rustdesk 2>/dev/null || true
-          pkill -f Xvfb 2>/dev/null || true
-      
-      - name: Keep workflow running
-        run: |
-          echo "=== RustDesk Screenshot Workflow (Ubuntu) ==="
-          echo "Workflow will run for up to 24 hours"
-          echo "Press the 'Cancel workflow' button to stop early"
-          echo "=============================================="
-          
-          # Keep the workflow running
-          START_TIME=$(date +%s)
-          END_TIME=$((START_TIME + 86400))  # 24 hours from start
-          
-          while [ $(date +%s) -lt $END_TIME ]; do
-            CURRENT_TIME=$(date +"%Y-%m-%d %H:%M:%S")
-            ELAPSED=$((($(date +%s) - START_TIME) / 60))
-            echo "[$CURRENT_TIME] Workflow running... (${ELAPSED} minutes elapsed)"
-            
-            # Check if processes are still running
-            if ps -p $RUSTDESK_PID > /dev/null 2>&1; then
-              echo "  RustDesk is still running"
-            else
-              echo "  RustDesk has stopped"
-            fi
-            
-            sleep 300  # Sleep for 5 minutes
-          done
-          
-          echo "24-hour limit reached, workflow completed"
+          echo "✅ Cleanup complete"
