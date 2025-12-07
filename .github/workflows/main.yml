@@ -1,191 +1,170 @@
-name: REAL Working Remote Access
+name: RustDesk Screenshot
 
 on:
   workflow_dispatch:
 
 jobs:
-  remote:
-    runs-on: macos-latest
-    timeout-minutes: 360
+  rustdesk-screenshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340  # 24 hours
 
     steps:
-      - name: Enable SSH (BYPASS Apple VNC completely)
+      - name: Update and install dependencies
         run: |
-          echo "=== ENABLING SSH INSTEAD ==="
-          
-          # Enable SSH - this ALWAYS works
-          sudo systemsetup -setremotelogin on
-          
-          # Create a user with password
-          sudo sysadminctl -addUser runner -password runner123 -admin
-          
-          echo "✅ SSH Enabled"
-          echo "User: runner"
-          echo "Password: runner123"
-          echo "Port: 22"
-
-      - name: Setup Tailscale
+          sudo apt-get update
+          sudo apt-get install -y wget unzip xvfb scrot imagemagick xdotool
+          echo "Dependencies installed"
+      
+      - name: Download RustDesk
         run: |
-          echo "=== Tailscale ==="
-          brew install tailscale
-          sudo brew services start tailscale
-          sleep 5
-          sudo tailscale up --authkey tskey-auth-katBTfGaCP11CNTRL-hMqSUZh4fgPZNHebqNt7gPCxLc3sP2pf
-          sleep 10
-          echo "IP: $(tailscale ip --4)"
-
-      - name: Create SSH tunnel script
+          RUSTDESK_URL="https://github.com/rustdesk/rustdesk/releases/download/1.4.4/rustdesk-1.4.4-x86_64.AppImage"
+          RUSTDESK_PATH="/tmp/rustdesk.AppImage"
+          wget -O "$RUSTDESK_PATH" "$RUSTDESK_URL"
+          chmod +x "$RUSTDESK_PATH"
+          echo "RUSTDESK_PATH=$RUSTDESK_PATH" >> $GITHUB_ENV
+          echo "RustDesk downloaded"
+      
+      - name: Create working directory
         run: |
-          echo "=== Creating SSH Tunnel Script ==="
-          
-          TS_IP=$(tailscale ip --4 2>/dev/null | head -1)
-          
-          # Create script for user to run
-          cat > /tmp/ssh_tunnel.sh << 'EOF'
-          #!/bin/bash
-          echo "SSH TUNNEL SCRIPT"
-          echo "=================="
-          echo ""
-          echo "Run this on YOUR machine to connect:"
-          echo ""
-          echo "Method 1: SSH Direct"
-          echo "  ssh runner@'$TS_IP'"
-          echo "  Password: runner123"
-          echo ""
-          echo "Method 2: VNC over SSH tunnel"
-          echo "  ssh -L 5901:localhost:5900 runner@'$TS_IP'"
-          echo "  Then connect VNC to: localhost:5901"
-          echo "  Password: (whatever VNC password is set)"
-          echo ""
-          echo "Method 3: Port forward everything"
-          echo "  ssh -L 5901:localhost:5900 \\"
-          echo "      -L 3389:localhost:3389 \\"
-          echo "      -L 8080:localhost:8080 \\"
-          echo "      runner@'$TS_IP'"
-          echo ""
-          echo "Tailscale IP: $TS_IP"
-          EOF
-          
-          chmod +x /tmp/ssh_tunnel.sh
-          /tmp/ssh_tunnel.sh
-
-      - name: Install x11vnc (REAL VNC, not Apple VNC)
+          WORK_DIR="$HOME/screenshots"
+          mkdir -p "$WORK_DIR"
+          echo "WORK_DIR=$WORK_DIR" >> $GITHUB_ENV
+          echo "Working directory created: $WORK_DIR"
+      
+      - name: Setup virtual display and start RustDesk
         run: |
-          echo "=== Installing x11vnc (Real VNC) ==="
+          # Start Xvfb (virtual framebuffer)
+          export DISPLAY=:99
+          Xvfb :99 -screen 0 1920x1080x24 &
+          XVFB_PID=$!
+          echo "XVFB_PID=$XVFB_PID" >> $GITHUB_ENV
           
-          # Install x11vnc via Homebrew
-          brew install x11vnc
-          
-          # Create x11vnc password file
-          echo "myvncpassword" | x11vnc -storepasswd - 2>/dev/null || echo "Password stored"
-          
-          # Start x11vnc on port 5902 (avoid conflict with Apple VNC)
-          echo "Starting x11vnc on port 5902..."
-          x11vnc -display :0 -auth guess -forever -noxdamage -repeat -rfbauth ~/.vnc/passwd -rfbport 5902 -shared -bg 2>/dev/null || true
-          
+          # Wait for Xvfb to start
           sleep 3
-          echo "x11vnc running on port 5902"
-          echo "Password: myvncpassword"
-
-      - name: Install RustDesk
+          
+          # Start RustDesk in background
+          $RUSTDESK_PATH &
+          RUSTDESK_PID=$!
+          echo "RUSTDESK_PID=$RUSTDESK_PID" >> $GITHUB_ENV
+          echo "RustDesk started with PID: $RUSTDESK_PID"
+          
+          # Give RustDesk time to initialize
+          sleep 15
+          
+          # List processes to verify
+          ps aux | grep rustdesk
+      
+      - name: Take screenshots
         run: |
-          echo "=== Installing RustDesk ==="
-          curl -L -o /tmp/rustdesk.dmg https://github.com/rustdesk/rustdesk/releases/download/1.4.4/rustdesk-1.4.4-x86_64.dmg
-          hdiutil attach /tmp/rustdesk.dmg -mountpoint /Volumes/RustDesk -nobrowse
-          sudo cp -R "/Volumes/RustDesk/RustDesk.app" /Applications/
-          hdiutil detach /Volumes/RustDesk
+          export DISPLAY=:99
+          cd "$WORK_DIR"
           
-          # Start RustDesk with specific settings
-          /Applications/RustDesk.app/Contents/MacOS/rustdesk --service 2>/dev/null &
-          sleep 5
-          
-          # Try to get ID
-          if [ -f "$HOME/.config/rustdesk/RustDesk.toml" ]; then
-            ID=$(grep -i id "$HOME/.config/rustdesk/RustDesk.toml" | head -1 | cut -d'"' -f2)
-            echo "RustDesk ID: $ID" || echo "Check RustDesk window for ID"
-          fi
-
-      - name: Create connection instructions
-        run: |
-          TS_IP=$(tailscale ip --4 2>/dev/null | head -1)
-          
-          cat > /tmp/CONNECT.txt << EOF
-          ==========================================
-          ⚡ WORKING REMOTE ACCESS
-          ==========================================
-          
-          🚨 FORGET APPLE VNC - IT DOESN'T WORK IN CI
-          
-          ✅ USE THESE METHODS INSTEAD:
-          
-          1. SSH (ALWAYS WORKS):
-             ssh runner@$TS_IP
-             Password: runner123
-          
-          2. x11vnc (REAL VNC on port 5902):
-             Connect to: $TS_IP:5902
-             Password: myvncpassword
-          
-          3. RustDesk:
-             ID: (check RustDesk application window)
-          
-          4. SSH Tunnel + VNC:
-             On YOUR machine run:
-               ssh -L 5901:localhost:5900 runner@$TS_IP
-             Then connect VNC to: localhost:5901
-          
-          ==========================================
-          PORTS OPEN:
-          22  - SSH
-          5902 - x11vnc (Real VNC)
-          41641 - RustDesk UDP
-          41642 - RustDesk TCP
-          
-          ==========================================
-          TAILSCALE IP: $TS_IP
-          ==========================================
-          EOF
-          
-          cat /tmp/CONNECT.txt
-
-      - name: Keep system alive
-        run: |
-          echo "=== SYSTEM RUNNING ==="
-          echo ""
-          
-          # Display connection info
-          cat /tmp/CONNECT.txt
-          echo ""
-          echo "Monitoring services..."
-          
-          # Keep services running
-          while true; do
-            echo ""
-            echo "[$(date '+%H:%M:%S')] Status:"
+          # Take multiple screenshots
+          for i in {1..3}; do
+            echo "Taking screenshot $i..."
+            SCREENSHOT_PATH="$WORK_DIR/screenshot_$i.png"
+            scrot "$SCREENSHOT_PATH"
             
-            # Check SSH
-            if sudo lsof -i :22 &>/dev/null; then
-              echo "✅ SSH: Port 22 open"
+            if [ -f "$SCREENSHOT_PATH" ]; then
+              echo "Screenshot saved: $SCREENSHOT_PATH"
+              # Display screenshot info
+              identify "$SCREENSHOT_PATH"
             else
-              echo "❌ SSH: Restarting..."
-              sudo systemsetup -setremotelogin on
+              echo "Failed to save screenshot $i"
             fi
             
-            # Check x11vnc
-            if lsof -i :5902 &>/dev/null; then
-              echo "✅ x11vnc: Port 5902 open"
-            else
-              echo "❌ x11vnc: Restarting..."
-              x11vnc -display :0 -auth guess -forever -noxdamage -repeat -rfbauth ~/.vnc/passwd -rfbport 5902 -shared -bg 2>/dev/null || true
-            fi
-            
-            # Check Tailscale
-            if tailscale status &>/dev/null; then
-              echo "✅ Tailscale: Connected"
-            else
-              echo "❌ Tailscale: Reconnecting..."
-              sudo tailscale up --reset 2>/dev/null || true
-            fi
-            
-            sleep 300
+            sleep 2
           done
+          
+          # Try to capture RustDesk window specifically
+          echo "Attempting to capture RustDesk window..."
+          xdotool search --name "RustDesk" windowsize 800 600
+          sleep 1
+          scrot -u "$WORK_DIR/rustdesk_window.png" 2>/dev/null || echo "Could not capture specific window"
+      
+      - name: Take alternative screenshots using import
+        run: |
+          export DISPLAY=:99
+          cd "$WORK_DIR"
+          
+          # Use ImageMagick's import command
+          echo "Taking screenshot with ImageMagick..."
+          import -window root "$WORK_DIR/imagemagick_screenshot.png"
+          
+          # Check if file was created
+          if [ -f "$WORK_DIR/imagemagick_screenshot.png" ]; then
+            echo "ImageMagick screenshot saved successfully"
+            ls -la "$WORK_DIR/imagemagick_screenshot.png"
+          fi
+      
+      - name: Verify and list screenshots
+        run: |
+          echo "Current directory: $(pwd)"
+          echo "Looking for screenshots in: $WORK_DIR"
+          ls -la "$WORK_DIR/"
+          
+          SCREENSHOTS_COUNT=$(ls "$WORK_DIR"/*.png 2>/dev/null | wc -l)
+          if [ "$SCREENSHOTS_COUNT" -eq 0 ]; then
+            echo "No PNG files found in $WORK_DIR"
+            echo "Checking other locations..."
+            find /tmp -name "*.png" -type f 2>/dev/null | head -10
+          else
+            echo "Found $SCREENSHOTS_COUNT screenshots:"
+            ls -la "$WORK_DIR"/*.png
+          fi
+      
+      - name: Upload screenshots as artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustdesk-screenshots-ubuntu
+          path: |
+            ${{ env.WORK_DIR }}/*.png
+          retention-days: 1
+      
+      - name: Cleanup processes
+        if: always()
+        run: |
+          echo "Cleaning up processes..."
+          # Kill RustDesk if running
+          if [ ! -z "$RUSTDESK_PID" ] && ps -p $RUSTDESK_PID > /dev/null 2>&1; then
+            kill $RUSTDESK_PID 2>/dev/null || true
+            echo "RustDesk process stopped"
+          fi
+          
+          # Kill Xvfb if running
+          if [ ! -z "$XVFB_PID" ] && ps -p $XVFB_PID > /dev/null 2>&1; then
+            kill $XVFB_PID 2>/dev/null || true
+            echo "Xvfb process stopped"
+          fi
+          
+          # Clean up any remaining processes
+          pkill -f rustdesk 2>/dev/null || true
+          pkill -f Xvfb 2>/dev/null || true
+      
+      - name: Keep workflow running
+        run: |
+          echo "=== RustDesk Screenshot Workflow (Ubuntu) ==="
+          echo "Workflow will run for up to 24 hours"
+          echo "Press the 'Cancel workflow' button to stop early"
+          echo "=============================================="
+          
+          # Keep the workflow running
+          START_TIME=$(date +%s)
+          END_TIME=$((START_TIME + 86400))  # 24 hours from start
+          
+          while [ $(date +%s) -lt $END_TIME ]; do
+            CURRENT_TIME=$(date +"%Y-%m-%d %H:%M:%S")
+            ELAPSED=$((($(date +%s) - START_TIME) / 60))
+            echo "[$CURRENT_TIME] Workflow running... (${ELAPSED} minutes elapsed)"
+            
+            # Check if processes are still running
+            if ps -p $RUSTDESK_PID > /dev/null 2>&1; then
+              echo "  RustDesk is still running"
+            else
+              echo "  RustDesk has stopped"
+            fi
+            
+            sleep 300  # Sleep for 5 minutes
+          done
+          
+          echo "24-hour limit reached, workflow completed"
