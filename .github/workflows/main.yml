@@ -1,388 +1,49 @@
-name: RustDesk with Proper Remote Access
+  name: Minimal Remote Access
 
 on:
   workflow_dispatch:
 
 jobs:
-  remote-access:
+  remote:
     runs-on: macos-latest
     timeout-minutes: 360
 
     steps:
-      - name: Setup proper VNC with compatibility mode
+      - name: Enable VNC
         run: |
-          echo "=== Setting up VNC with compatibility ==="
-          
-          # First, completely disable ARD if it's running
+          # ENABLE VNC - THAT'S IT
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -deactivate -stop 2>/dev/null || true
+            -activate -configure -access -on -privs -all -restart -agent
           
-          sleep 2
-          
-          # Enable Screen Sharing (native macOS VNC, not ARD)
-          echo "Enabling native macOS Screen Sharing..."
-          sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist
-          
-          # Configure Screen Sharing for VNC compatibility
-          echo "Configuring for VNC compatibility..."
-          sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist \
-            VNCAlwaysStartOnConsole -bool true
-          sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist \
-            VNCLegacyConnectionsEnabled -bool true
-          sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist \
-            VNCPort -int 5900
-          
-          # Set VNC password
-          echo "Setting VNC password..."
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -configure -clientopts -setvnclegacy -vnclegacy yes
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -configure -clientopts -setvncpw myvncpassword
+            -configure -clientopts -setvnclegacy -vnclegacy yes -setvncpw myvncpassword
           
-          # Restart the service
-          echo "Restarting screen sharing..."
-          sudo launchctl unload /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
-          sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist
-          
-          # Also enable Remote Management for compatibility
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -activate -configure -access -on -restart -agent -privs -all
-          
-          sleep 5
-          
-          # Verify services are running
-          echo "Checking services..."
-          if sudo lsof -i :5900 &>/dev/null; then
-            echo "✅ VNC is listening on port 5900"
-          else
-            echo "⚠️ VNC not found on 5900, checking other ports..."
-            sudo netstat -an | grep "\.59" || true
-          fi
-          
-          echo "VNC Password: myvncpassword"
+          echo "✅ VNC Enabled"
+          echo "Password: myvncpassword"
+          echo "Port: 5900"
 
-      - name: Install and setup NoMachine (alternative to VNC)
+      - name: Start Tailscale
         run: |
-          echo "=== Installing NoMachine for better remote access ==="
-          
-          # Download NoMachine
-          echo "Downloading NoMachine..."
-          curl -L -o /tmp/nomachine.pkg "https://download.nomachine.com/download/8.10/MacOS/nomachine_8.10.1_1.pkg"
-          
-          # Install
-          echo "Installing NoMachine..."
-          sudo installer -pkg /tmp/nomachine.pkg -target /
-          rm -f /tmp/nomachine.pkg
-          
-          # Configure NoMachine to start automatically
-          echo "Configuring NoMachine..."
-          sudo /Applications/NoMachine.app/Contents/MacOS/nxserver --install
-          sudo /Applications/NoMachine.app/Contents/MacOS/nxserver --start
-          
-          # Get NoMachine connection info
-          NX_INFO="/tmp/nxinfo.txt"
-          sudo /Applications/NoMachine.app/Contents/MacOS/nxserver --list > "$NX_INFO" 2>/dev/null || true
-          
-          if [ -f "$NX_INFO" ]; then
-            echo "NoMachine connection info:"
-            cat "$NX_INFO"
-          fi
-          
-          echo "✅ NoMachine installed and started"
-          echo "NoMachine runs on port 4000 by default"
+          brew install tailscale || true
+          sudo brew services start tailscale 2>/dev/null || true
+          sudo tailscale up --authkey tskey-auth-katBTfGaCP11CNTRL-hMqSUZh4fgPZNHebqNt7gPCxLc3sP2pf || true
+          echo "Tailscale IP: $(tailscale ip --4 2>/dev/null | head -1)"
 
-      - name: Install and configure RustDesk
+      - name: Run forever
         run: |
-          echo "=== Installing RustDesk ==="
-          
-          # Download and install RustDesk
-          curl -L -o /tmp/rustdesk.dmg "https://github.com/rustdesk/rustdesk/releases/download/1.4.4/rustdesk-1.4.4-x86_64.dmg"
-          hdiutil attach /tmp/rustdesk.dmg -mountpoint /Volumes/RustDesk -nobrowse
-          sudo cp -R "/Volumes/RustDesk/RustDesk.app" /Applications/
-          hdiutil detach /Volumes/RustDesk
-          rm -f /tmp/rustdesk.dmg
-          
-          # Start RustDesk
-          echo "Starting RustDesk..."
-          open -a /Applications/RustDesk.app
-          sleep 10
-          
-          # Try to get RustDesk ID
-          echo "Getting RustDesk ID..."
-          if [ -f "$HOME/.config/rustdesk/RustDesk.toml" ]; then
-            RUSTDESK_ID=$(grep -i "id" "$HOME/.config/rustdesk/RustDesk.toml" | head -1 | cut -d'"' -f2 || true)
-            if [ -n "$RUSTDESK_ID" ]; then
-              echo "RustDesk ID: $RUSTDESK_ID"
-              echo "RUSTDESK_ID=$RUSTDESK_ID" >> $GITHUB_ENV
-            fi
-          fi
-          
-          # Also check for RustDesk ID via CLI if available
-          if [ -f "/Applications/RustDesk.app/Contents/MacOS/rustdesk" ]; then
-            /Applications/RustDesk.app/Contents/MacOS/rustdesk --get-id 2>/dev/null || true
-          fi
-
-      - name: Install and configure Tailscale
-        run: |
-          echo "=== Setting up Tailscale ==="
-          
-          # Install Tailscale via Homebrew
-          if ! command -v brew &>/dev/null; then
-            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-            echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
-            eval "$(/opt/homebrew/bin/brew shellenv)"
-          fi
-          
-          brew install tailscale
-          
-          # Start Tailscale
-          echo "Starting Tailscale..."
-          sudo brew services start tailscale
-          sleep 5
-          
-          # Authenticate
-          echo "Authenticating Tailscale..."
-          AUTH_KEY="tskey-auth-katBTfGaCP11CNTRL-hMqSUZh4fgPZNHebqNt7gPCxLc3sP2pf"
-          sudo tailscale up --authkey "$AUTH_KEY" --accept-routes
-          
-          sleep 10
-          
-          # Get Tailscale IP
-          TAILSCALE_IP=$(tailscale ip --4 2>/dev/null | head -1)
-          echo "Tailscale IP: $TAILSCALE_IP"
-          echo "TAILSCALE_IP=$TAILSCALE_IP" >> $GITHUB_ENV
-
-      - name: Create connection instructions
-        run: |
-          echo "=== Creating Connection Instructions ==="
-          
-          INFO_DIR="$HOME/remote_access_info"
-          mkdir -p "$INFO_DIR"
-          
-          # Get all connection info
-          LOCAL_IP=$(ipconfig getifaddr en0 2>/dev/null || echo "Unknown")
-          TAILSCALE_IP=$(tailscale ip --4 2>/dev/null | head -1 || echo "Not connected")
-          
-          # Create detailed instructions
-          INSTRUCTIONS="$INFO_DIR/connect.txt"
-          cat > "$INSTRUCTIONS" << EOF
-          ========================================
-          REMOTE ACCESS INSTRUCTIONS
-          ========================================
-          Generated: $(date)
-          
-          1. VNC ACCESS (may need Apple-compatible client):
-             Address: $TAILSCALE_IP:5900
-             Password: myvncpassword
-             
-             ⚠️ Note: macOS VNC uses Apple's protocol. Recommended clients:
-                - Apple Remote Desktop (macOS)
-                - RealVNC Viewer (enable "Apple Remote Desktop" compatibility)
-                - Screens (macOS/iOS app)
-          
-          2. NOMACHINE (Recommended - better compatibility):
-             Address: $TAILSCALE_IP:4000
-             Client: Download from https://www.nomachine.com/
-             No password required initially
-          
-          3. RUSTDESK:
-             ID: ${RUSTDESK_ID:-Check RustDesk window for ID}
-             Password: Will be displayed in RustDesk app
-             Client: https://rustdesk.com/
-          
-          4. LOCAL NETWORK ACCESS:
-             IP: $LOCAL_IP
-          
-          ========================================
-          TROUBLESHOOTING:
-          
-          If VNC connection fails with "incompatible protocol":
-          1. Use RealVNC Viewer: Enable "Apple Remote Desktop" in options
-          2. Use NoMachine instead (port 4000)
-          3. Use RustDesk if ID is available
-          
-          ========================================
-          PORTS OPEN:
-          5900 - VNC/Screen Sharing
-          4000 - NoMachine
-          41641 - RustDesk (UDP)
-          41642 - RustDesk (TCP)
-          
-          ========================================
-          TAILSCALE STATUS:
-          Run: tailscale status
-          Your IP: $TAILSCALE_IP
-          EOF
-          
-          # Also create a simple HTML page
-          HTML_FILE="$INFO_DIR/connect.html"
-          cat > "$HTML_FILE" << EOF
-          <!DOCTYPE html>
-          <html>
-          <head>
-              <title>Remote Access Info</title>
-              <style>
-                  body { font-family: Arial, sans-serif; margin: 40px; }
-                  h1 { color: #333; }
-                  .method { background: #f5f5f5; padding: 15px; margin: 10px 0; border-radius: 5px; }
-                  .warning { background: #fff3cd; border-left: 4px solid #ffc107; padding: 10px; }
-                  code { background: #eee; padding: 2px 5px; border-radius: 3px; }
-              </style>
-          </head>
-          <body>
-              <h1>📡 Remote Access Information</h1>
-              <p>Generated: $(date)</p>
-              
-              <div class="method">
-                  <h2>1. VNC Access</h2>
-                  <p><strong>Address:</strong> <code>$TAILSCALE_IP:5900</code></p>
-                  <p><strong>Password:</strong> <code>myvncpassword</code></p>
-                  <div class="warning">
-                      <strong>⚠️ Note:</strong> macOS uses Apple's VNC protocol.<br>
-                      Use: Apple Remote Desktop, RealVNC (with "Apple Remote Desktop" enabled), or Screens app.
-                  </div>
-              </div>
-              
-              <div class="method">
-                  <h2>2. NoMachine (Recommended)</h2>
-                  <p><strong>Address:</strong> <code>$TAILSCALE_IP:4000</code></p>
-                  <p><strong>Client:</strong> <a href="https://www.nomachine.com/">Download NoMachine</a></p>
-              </div>
-              
-              <div class="method">
-                  <h2>3. RustDesk</h2>
-                  <p><strong>ID:</strong> ${RUSTDESK_ID:-Check the RustDesk application window}</p>
-                  <p><strong>Client:</strong> <a href="https://rustdesk.com/">Download RustDesk</a></p>
-              </div>
-              
-              <h2>Ports Open:</h2>
-              <ul>
-                  <li>5900 - VNC/Screen Sharing</li>
-                  <li>4000 - NoMachine</li>
-                  <li>41641 - RustDesk (UDP)</li>
-                  <li>41642 - RustDesk (TCP)</li>
-              </ul>
-          </body>
-          </html>
-          EOF
-          
-          echo "Connection instructions saved to $INFO_DIR"
-          echo "INFO_DIR=$INFO_DIR" >> $GITHUB_ENV
-
-      - name: Take verification screenshots
-        run: |
-          echo "=== Taking verification screenshots ==="
-          
-          SCREENSHOT_DIR="$HOME/screenshots"
-          mkdir -p "$SCREENSHOT_DIR"
-          
-          # Take screenshots of different apps
-          for i in {1..5}; do
-            echo "Screenshot $i..."
-            FILE="$SCREENSHOT_DIR/screen_$i.png"
-            screencapture -x "$FILE" 2>/dev/null || true
-            sleep 1
-          done
-          
-          echo "SCREENSHOT_DIR=$SCREENSHOT_DIR" >> $GITHUB_ENV
-
-      - name: Upload all information
-        uses: actions/upload-artifact@v4
-        with:
-          name: remote-access-complete
-          path: |
-            ${{ env.INFO_DIR }}
-            ${{ env.SCREENSHOT_DIR }}
-          retention-days: 1
-
-      - name: Monitor and maintain connection
-        run: |
-          echo "=== SYSTEM ACTIVE - REMOTE ACCESS ENABLED ==="
+          TS_IP=$(tailscale ip --4 2>/dev/null | head -1)
+          echo "========================================"
+          echo "REMOTE ACCESS READY"
+          echo "========================================"
+          echo "VNC: $TS_IP:5900"
+          echo "Password: myvncpassword"
           echo ""
-          echo "🎯 PRIMARY CONNECTION METHODS:"
-          echo ""
-          echo "1. NoMachine (port 4000) - Best compatibility"
-          echo "2. RustDesk - Check app window for ID"
-          echo "3. VNC (port 5900) - May need Apple-compatible client"
-          echo ""
-          echo "📡 TAILSCALE IP: $(tailscale ip --4 2>/dev/null | head -1)"
-          echo "⏰ WILL RUN FOR 6 HOURS"
+          echo "⚠️ Use Apple-compatible VNC client!"
+          echo "========================================"
           echo ""
           
-          # Counter for monitoring
-          COUNTER=0
-          
+          # Just keep it running
           while true; do
-            COUNTER=$((COUNTER + 1))
-            MINUTES=$((COUNTER * 5))
-            
-            echo ""
-            echo "=== STATUS CHECK (${MINUTES} minutes) ==="
-            echo "Time: $(date)"
-            
-            # Check VNC
-            if sudo lsof -i :5900 &>/dev/null; then
-              echo "✅ VNC: Port 5900 open"
-            else
-              echo "❌ VNC: Port 5900 closed, restarting..."
-              sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
-            fi
-            
-            # Check NoMachine
-            if sudo lsof -i :4000 &>/dev/null; then
-              echo "✅ NoMachine: Port 4000 open"
-            else
-              echo "❌ NoMachine: Port 4000 closed, restarting..."
-              sudo /Applications/NoMachine.app/Contents/MacOS/nxserver --start 2>/dev/null || true
-            fi
-            
-            # Check Tailscale
-            if tailscale status &>/dev/null && tailscale ip --4 &>/dev/null; then
-              TS_IP=$(tailscale ip --4 2>/dev/null | head -1)
-              echo "✅ Tailscale: Connected ($TS_IP)"
-            else
-              echo "❌ Tailscale: Disconnected, reconnecting..."
-              sudo tailscale up --authkey tskey-auth-katBTfGaCP11CNTRL-hMqSUZh4fgPZNHebqNt7gPCxLc3sP2pf --reset 2>/dev/null || true
-            fi
-            
-            # Check RustDesk
-            if pgrep -f "RustDesk" &>/dev/null; then
-              echo "✅ RustDesk: Running"
-            else
-              echo "❌ RustDesk: Not running, restarting..."
-              open -a /Applications/RustDesk.app 2>/dev/null || true
-            fi
-            
-            # Take screenshot every 30 minutes
-            if [ $((COUNTER % 6)) -eq 0 ]; then
-              TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-              PERIODIC_FILE="$SCREENSHOT_DIR/monitor_${TIMESTAMP}.png"
-              screencapture -x "$PERIODIC_FILE" 2>/dev/null || true
-              echo "📸 Status screenshot saved"
-            fi
-            
-            echo ""
-            echo "Next check in 5 minutes..."
-            sleep 300
+            sleep 60
+            echo "[$(date)] Still running..."
           done
-
-      - name: Final cleanup
-        if: always()
-        run: |
-          echo "=== FINAL CLEANUP ==="
-          
-          # Save final status
-          echo "Final status at $(date)" > /tmp/final_status.txt
-          
-          echo "1. Stopping services..." | tee -a /tmp/final_status.txt
-          sudo launchctl unload /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -deactivate -stop 2>/dev/null || true
-          sudo /Applications/NoMachine.app/Contents/MacOS/nxserver --stop 2>/dev/null || true
-          pkill -f "RustDesk" 2>/dev/null || true
-          sudo tailscale down 2>/dev/null || true
-          
-          echo "2. Final screenshot..." | tee -a /tmp/final_status.txt
-          screencapture -x /tmp/final_screenshot.png 2>/dev/null || true
-          
-          echo "✅ Cleanup complete"
