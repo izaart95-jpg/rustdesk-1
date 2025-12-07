@@ -1,117 +1,53 @@
-name: Rustdesk with Sunshine
+name: Rustdesk with Sunshine + VNC
 
 on:
   workflow_dispatch:
 
 env:
+  DISPLAY: ":0"
+  XDG_RUNTIME_DIR: "/tmp/runtime-root"
   SSHX_SESSION_FILE: /tmp/sshx_session.log
-  SSHX_PID: 0
 
 jobs:
-  setup-sshx:
+  setup:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # 6 hours total
+    timeout-minutes: 360
 
     steps:
+
+      ######################################################################
+      # 1️⃣ Install dependencies
+      ######################################################################
       - name: Install dependencies
         run: |
-          echo "=== Installing basic dependencies ==="
-          sudo apt-get update
-          sudo apt-get install -y curl wget
-          echo "✅ Dependencies installed"
+          sudo apt update
+          sudo apt install -y curl wget x11vnc \
+            ubuntu-desktop dbus-x11 \
+            xserver-xorg-core xserver-xorg-video-dummy \
+            xinit
 
-      - name: Install sshx and show URL
+      ######################################################################
+      # 2️⃣ Start SSHX
+      ######################################################################
+      - name: Start SSHX
         run: |
-          echo "=== Installing sshx ==="
           curl -sSf https://sshx.io/get | sh
-          
-          echo ""
-          echo "=== Starting sshx session ==="
-          
-          # Run sshx and capture output to file
           sshx 2>&1 | tee "$SSHX_SESSION_FILE" &
-          SSHX_PID=$!
-          echo "SSHX_PID=$SSHX_PID" >> $GITHUB_ENV
-          
-          # Wait for sshx to start
           sleep 10
-          
-          # Check if sshx is running
-          if ps -p $SSHX_PID > /dev/null 2>&1; then
-            echo "✅ sshx running with PID: $SSHX_PID"
-          else
-            echo "⚠️ sshx may have exited"
-          fi
-          
-          # Extract and show the sshx URL
-          echo ""
-          echo "=== SSHX Connection URL ==="
-          if [ -f "$SSHX_SESSION_FILE" ]; then
-            # Look for the sshx.io URL in the output
-            SSHX_URL=$(grep -o "https://sshx.io/[a-zA-Z0-9-]\+" "$SSHX_SESSION_FILE" | head -1 || true)
-            if [ ! -z "$SSHX_URL" ]; then
-              echo "🔗 Connect via: $SSHX_URL"
-              echo "SSHX_URL=$SSHX_URL" >> $GITHUB_ENV
-            else
-              echo "⚠️ Could not extract SSHX URL from logs"
-              echo "=== Last 10 lines of sshx output ==="
-              tail -10 "$SSHX_SESSION_FILE" || true
-            fi
-          fi
+          echo "SSHX URL:"
+          grep -o "https://sshx.io/[a-zA-Z0-9-]*" "$SSHX_SESSION_FILE" | head -1
 
-      - name: Install Ubuntu Desktop and required packages
+      ######################################################################
+      # 3️⃣ Create Dummy Display for Xorg
+      ######################################################################
+      - name: Create dummy Xorg monitor
         run: |
-          echo "=== Installing required packages ==="
-          
-          # Update and install required packages
-          sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            ubuntu-desktop-minimal \
-            dbus-x11 \
-            xinit \
-            xserver-xorg-core \
-            xserver-xorg-video-dummy \
-            x11-xserver-utils \
-            x11vnc \
-            pulseaudio \
-            mesa-utils \
-            libgl1-mesa-dri
-            
-          echo "✅ Packages installed"
-
-      - name: Install Tailscale
-        run: |
-          echo "=== Installing Tailscale ==="
-          
-          # Install Tailscale
-          curl -fsSL https://tailscale.com/install.sh | sh
-          
-          # Start Tailscale with auth key
-          sudo tailscale up --auth-key "tskey-auth-katBTfGaCP11CNTRL-hMqSUZh4fgPZNHebqNt7gPCxLc3sP2pf" --hostname "github-runner-$(date +%s)" &
-          
-          echo "✅ Tailscale installed and connecting in background"
-          
-          # Wait a bit for connection
-          sleep 15
-          
-          # Show Tailscale status
-          echo "=== Tailscale Status ==="
-          sudo tailscale status || true
-
-      - name: Configure X11 dummy display for Sunshine
-        run: |
-          echo "=== Configuring X11 dummy display ==="
-          
-          # Create X11 configuration directory
           sudo mkdir -p /etc/X11/xorg.conf.d
-          
-          # Create dummy display configuration
-          cat << EOF | sudo tee /etc/X11/xorg.conf.d/10-dummy.conf
+          sudo tee /etc/X11/xorg.conf.d/10-headless-monitor.conf >/dev/null << 'EOF'
           Section "Device"
             Identifier "DummyDevice"
             Driver "dummy"
             Option "IgnoreEDID" "true"
-            Option "NoDDC" "true"
             VideoRam 256000
           EndSection
 
@@ -120,323 +56,83 @@ jobs:
             HorizSync 30-70
             VertRefresh 50-75
             Modeline "1920x1080" 172.80 1920 2040 2248 2576 1080 1083 1088 1120
-            Option "PreferredMode" "1920x1080"
           EndSection
 
           Section "Screen"
             Identifier "DummyScreen"
             Device "DummyDevice"
             Monitor "DummyMonitor"
-            DefaultDepth 24
             SubSection "Display"
-              Depth 24
-              Modes "1920x1080"
+                Depth 24
+                Modes "1920x1080"
             EndSubSection
           EndSection
-
-          Section "ServerLayout"
-            Identifier "DefaultLayout"
-            Screen "DummyScreen"
-          EndSection
           EOF
-          
-          echo "✅ X11 dummy display configured"
 
-      - name: Setup Sunshine user and permissions
+      ######################################################################
+      # 4️⃣ Launch REAL Xorg + GNOME session
+      ######################################################################
+      - name: Start Xorg + GNOME
         run: |
-          echo "=== Setting up Sunshine permissions ==="
-          
-          # Create input device permissions
-          sudo groupadd -f -r input
-          sudo usermod -aG input,audio,video,render $(whoami)
-          
-          # Configure udev rules for virtual input devices
-          cat << EOF | sudo tee /etc/udev/rules.d/85-sunshine-input.rules
-          # uinput permissions
-          KERNEL=="uinput", MODE="0660", GROUP="input"
-          
-          # Virtual input devices
-          KERNEL=="event*", SUBSYSTEM=="input", MODE="0660", GROUP="input"
-          KERNEL=="mice", SUBSYSTEM=="input", MODE="0660", GROUP="input"
-          KERNEL=="mouse*", SUBSYSTEM=="input", MODE="0660", GROUP="input"
-          
-          # GPU permissions for render group
-          KERNEL=="renderD*", GROUP="render", MODE="0660"
-          EOF
-          
-          # Reload udev rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger
-          
-          echo "✅ Permissions configured"
+          sudo mkdir -p $XDG_RUNTIME_DIR
+          sudo chmod 700 $XDG_RUNTIME_DIR
 
+          echo "Starting Xorg (dummy display)..."
+          sudo Xorg :0 -noreset -nolisten tcp &
+          sleep 6
+
+          echo "Starting GNOME session..."
+          export DISPLAY=:0
+          gnome-session &
+          sleep 15
+
+      ######################################################################
+      # 5️⃣ Start VNC (mirrors actual Xorg display)
+      ######################################################################
+      - name: Start x11vnc
+        run: |
+          export DISPLAY=:0
+          x11vnc -display :0 -nopw -forever -repeat -shared &
+          sleep 3
+          echo "VNC running on port 5900"
+
+      ######################################################################
+      # 6️⃣ Install Sunshine
+      ######################################################################
       - name: Install Sunshine
         run: |
-          echo "=== Installing Sunshine ==="
-          
-          # Download Sunshine
           SUNSHINE_URL="https://github.com/LizardByte/Sunshine/releases/download/v2025.924.154138/sunshine-ubuntu-24.04-amd64.deb"
-          SUNSHINE_DEB="sunshine.deb"
-          
-          echo "Downloading Sunshine from: $SUNSHINE_URL"
-          wget -O "$SUNSHINE_DEB" "$SUNSHINE_URL"
-          
-          echo "Installing Sunshine..."
-          sudo apt install -y "./$SUNSHINE_DEB"
-          
-          echo "✅ Sunshine installed"
+          wget -O sunshine.deb "$SUNSHINE_URL"
+          sudo apt install -y ./sunshine.deb
 
-      - name: Start X11 server with dummy display
+      ######################################################################
+      # 7️⃣ Start Sunshine on the dummy display
+      ######################################################################
+      - name: Start Sunshine
         run: |
-          echo "=== Starting X11 server ==="
-          
-          # Stop any existing X servers
-          pkill Xorg 2>/dev/null || true
-          sleep 2
-          
-          # Start X server with dummy driver on display :0
-          sudo Xorg :0 -config /etc/X11/xorg.conf.d/10-dummy.conf -noreset -novtswitch -sharevts -verbose 3 &
-          XORG_PID=$!
-          echo "XORG_PID=$XORG_PID" >> $GITHUB_ENV
-          
-          # Wait for X server to start
+          export DISPLAY=:0
+          sunshine &
           sleep 5
-          
-          # Set DISPLAY environment variable
-          export DISPLAY=:0
-          echo "DISPLAY=:0" >> $GITHUB_ENV
-          
-          # Check if X server is running
-          if xdpyinfo -display :0 >/dev/null 2>&1; then
-            echo "✅ X server running on display :0"
-            echo "X Server PID: $XORG_PID"
-          else
-            echo "❌ X server failed to start"
-            exit 1
-          fi
+          echo "Sunshine running on ports: 47989 (stream), 47990 (web)"
 
-      - name: Start Sunshine and VNC
+      ######################################################################
+      # 8️⃣ Install and start Tailscale
+      ######################################################################
+      - name: Start Tailscale
         run: |
-          echo "=== Starting Sunshine and VNC ==="
-          
-          # Set DISPLAY
-          export DISPLAY=:0
-          
-          # Start GNOME session in background
-          echo "Starting GNOME session..."
-          dbus-launch --exit-with-session gnome-session &
-          GNOME_PID=$!
-          echo "GNOME_PID=$GNOME_PID" >> $GITHUB_ENV
+          curl -fsSL https://tailscale.com/install.sh | sh
+          sudo tailscale up --auth-key "tskey-auth-katBTfGaCP11CNTRL-hMqSUZh4fgPZNHebqNt7gPCxLc3sP2pf" --hostname "github-runner-$(date +%s)"
           sleep 10
-          
-          # Start VNC server on display :0 (port 5900) for fallback access
-          echo "Starting VNC server..."
-          x11vnc -display :0 -forever -shared -rfbport 5900 -bg -noxdamage -passwd sunshine123 &
-          VNC_PID=$!
-          echo "VNC_PID=$VNC_PID" >> $GITHUB_ENV
-          
-          # Create Sunshine configuration directory with proper permissions
-          mkdir -p ~/.config/sunshine
-          
-          # Start Sunshine with proper environment
-          echo "Starting Sunshine..."
-          DISPLAY=:0 WAYLAND_DISPLAY= sunshine &
-          SUNSHINE_PID=$!
-          echo "SUNSHINE_PID=$SUNSHINE_PID" >> $GITHUB_ENV
-          
-          # Wait for Sunshine to initialize
-          sleep 10
-          
-          echo "✅ Services started"
-          echo "Sunshine PID: $SUNSHINE_PID"
-          echo "VNC PID: $VNC_PID"
-          echo "GNOME PID: $GNOME_PID"
-          
-          # Show connection info
-          echo ""
-          echo "=== Connection Information ==="
-          echo "Sunshine Web UI: https://localhost:47990"
-          echo "Sunshine Streaming: port 47989"
-          echo "VNC Server (fallback): port 5900"
-          echo "VNC Password: sunshine123"
+          echo "Tailscale IP:"
+          sudo tailscale ip
 
-      - name: Keep SSHX alive for 6 hours
+      ######################################################################
+      # 9️⃣ Keep alive 6 hours
+      ######################################################################
+      - name: Keep Alive
         run: |
-          echo "=== SSHX Remote Access Active ==="
-          echo ""
-          echo "Start time: $(date)"
-          echo "Will keep alive until: $(date -d '+6 hours')"
-          echo ""
-          
-          # Set DISPLAY for all commands
-          export DISPLAY=:0
-          
-          # Display SSHX connection info
-          if [ -f "$SSHX_SESSION_FILE" ]; then
-            echo "=== SSHX Session Information ==="
-            SSHX_URL=$(grep -o "https://sshx.io/[a-zA-Z0-9-]\+" "$SSHX_SESSION_FILE" | head -1 || true)
-            if [ ! -z "$SSHX_URL" ]; then
-              echo "🔗 SSHX Connection URL: $SSHX_URL"
-            else
-              echo "⚠️ SSHX URL not found in logs"
-            fi
-            echo ""
-          fi
-          
-          # Display Tailscale IP if connected
-          echo "=== Tailscale Status ==="
-          sudo tailscale ip 2>/dev/null | head -1 | while read ip; do
-            echo "🌐 Tailscale IP: $ip"
-            echo "🌐 Sunshine via Tailscale: https://$ip:47990"
-            echo "🌐 VNC via Tailscale: $ip:5900"
-          done || echo "Tailscale IP not available"
-          echo ""
-          
-          # Display Sunshine info
-          echo "=== Sunshine Information ==="
-          echo "🌞 Sunshine Web Interface: https://localhost:47990"
-          echo "🌞 Sunshine Streaming Port: 47989"
-          echo "🌞 Default credentials: sunshine/sunshine"
-          echo ""
-          echo "=== VNC Information (fallback) ==="
-          echo "🖥️  VNC Server: port 5900"
-          echo "🔑 VNC Password: sunshine123"
-          echo ""
-          
-          # Keep alive for 6 hours (360 minutes)
-          TOTAL_MINUTES=360
-          for minute in $(seq 1 $TOTAL_MINUTES); do
-            echo "=== Minute $minute/$TOTAL_MINUTES ==="
-            echo "Time: $(date)"
-            echo "Elapsed: $((minute / 60))h $((minute % 60))m"
-            echo "Remaining: $(((TOTAL_MINUTES - minute) / 60))h $(((TOTAL_MINUTES - minute) % 60))m"
-            
-            # Check if sshx is running
-            if [ ! -z "$SSHX_PID" ] && ps -p $SSHX_PID > /dev/null 2>&1; then
-              echo "✅ sshx: Running (PID: $SSHX_PID)"
-            else
-              echo "❌ sshx: Not running, attempting to restart..."
-              # Kill any remaining sshx processes
-              pkill -f "sshx" 2>/dev/null || true
-              sleep 2
-              # Restart sshx
-              sshx 2>&1 | tee -a "$SSHX_SESSION_FILE" &
-              SSHX_PID=$!
-              echo "New PID: $SSHX_PID"
-              echo "SSHX_PID=$SSHX_PID" >> $GITHUB_ENV
-              sleep 10
-            fi
-            
-            # Check other services every 5 minutes
-            if [ $((minute % 5)) -eq 0 ]; then
-              echo "=== Service Status Check ==="
-              
-              # Check X server
-              if ps -p $XORG_PID > /dev/null 2>&1; then
-                echo "✅ X Server: Running (PID: $XORG_PID)"
-                if xdpyinfo -display :0 >/dev/null 2>&1; then
-                  echo "   Display :0: Active"
-                else
-                  echo "   Display :0: Inactive, restarting X..."
-                  pkill Xorg 2>/dev/null || true
-                  sleep 2
-                  sudo Xorg :0 -config /etc/X11/xorg.conf.d/10-dummy.conf -noreset -novtswitch -sharevts &
-                  XORG_PID=$!
-                  echo "XORG_PID=$XORG_PID" >> $GITHUB_ENV
-                  sleep 5
-                fi
-              else
-                echo "❌ X Server: Not running, restarting..."
-                sudo Xorg :0 -config /etc/X11/xorg.conf.d/10-dummy.conf -noreset -novtswitch -sharevts &
-                XORG_PID=$!
-                echo "XORG_PID=$XORG_PID" >> $GITHUB_ENV
-                sleep 5
-              fi
-              
-              # Check Sunshine
-              if ps -p $SUNSHINE_PID > /dev/null 2>&1; then
-                echo "✅ Sunshine: Running (PID: $SUNSHINE_PID)"
-                # Check if Sunshine web UI is responding
-                if curl -s -k https://localhost:47990 >/dev/null 2>&1; then
-                  echo "   Web UI: Accessible"
-                else
-                  echo "   Web UI: Not responding, restarting Sunshine..."
-                  pkill -f "sunshine" 2>/dev/null || true
-                  sleep 2
-                  DISPLAY=:0 WAYLAND_DISPLAY= sunshine &
-                  SUNSHINE_PID=$!
-                  echo "SUNSHINE_PID=$SUNSHINE_PID" >> $GITHUB_ENV
-                  sleep 10
-                fi
-              else
-                echo "⚠️ Sunshine: Not running, restarting..."
-                pkill -f "sunshine" 2>/dev/null || true
-                sleep 2
-                DISPLAY=:0 WAYLAND_DISPLAY= sunshine &
-                SUNSHINE_PID=$!
-                echo "SUNSHINE_PID=$SUNSHINE_PID" >> $GITHUB_ENV
-                sleep 10
-              fi
-              
-              # Check Tailscale
-              if sudo tailscale status 2>/dev/null | grep -q "active"; then
-                echo "✅ Tailscale: Connected"
-                # Show Tailscale IP
-                TAILSCALE_IP=$(sudo tailscale ip 2>/dev/null | head -1 || echo "")
-                if [ ! -z "$TAILSCALE_IP" ]; then
-                  echo "   IP Address: $TAILSCALE_IP"
-                  echo "   Sunshine via Tailscale: https://$TAILSCALE_IP:47990"
-                  echo "   VNC via Tailscale: $TAILSCALE_IP:5900"
-                fi
-              else
-                echo "⚠️ Tailscale: Not connected, attempting restart..."
-                sudo tailscale up --auth-key "tskey-auth-katBTfGaCP11CNTRL-hMqSUZh4fgPZNHebqNt7gPCxLc3sP2pf" --reset || true
-              fi
-            fi
-            
-            # Wait for next minute
-            if [ $minute -lt $TOTAL_MINUTES ]; then
-              echo "⏳ Waiting 60 seconds..."
-              sleep 60
-            fi
+          for i in {1..360}; do
+            echo "Minute $i / 360 - $(date)"
+            sleep 60
           done
-          
-          echo ""
-          echo "✅ 6 hours complete. Session ending."
 
-      - name: Cleanup
-        if: always()
-        run: |
-          echo "=== Cleaning up ==="
-          
-          # Kill sshx process
-          if [ ! -z "$SSHX_PID" ] && ps -p $SSHX_PID > /dev/null 2>&1; then
-            echo "Stopping sshx (PID: $SSHX_PID)..."
-            kill $SSHX_PID 2>/dev/null || true
-            sleep 2
-          fi
-          
-          # Kill any other sshx processes
-          pkill -f "sshx" 2>/dev/null || true
-          
-          # Kill Sunshine
-          echo "Stopping Sunshine..."
-          pkill -f "sunshine" 2>/dev/null || true
-          
-          # Kill VNC
-          echo "Stopping VNC..."
-          pkill -f "x11vnc" 2>/dev/null || true
-          
-          # Kill GNOME session
-          echo "Stopping GNOME session..."
-          pkill -f "gnome-session" 2>/dev/null || true
-          
-          # Kill X server
-          echo "Stopping X server..."
-          pkill Xorg 2>/dev/null || true
-          
-          # Stop Tailscale
-          echo "Stopping Tailscale..."
-          sudo tailscale down 2>/dev/null || true
-          
-          echo "✅ Cleanup complete"
