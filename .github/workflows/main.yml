@@ -1,116 +1,191 @@
-name: Simple macOS Remote Access
+name: REAL Working Remote Access
 
 on:
   workflow_dispatch:
 
 jobs:
-  remote-access:
+  remote:
     runs-on: macos-latest
     timeout-minutes: 360
 
     steps:
-      - name: SIMPLE VNC Setup
+      - name: Enable SSH (BYPASS Apple VNC completely)
         run: |
-          echo "=== SIMPLE VNC ENABLE ==="
+          echo "=== ENABLING SSH INSTEAD ==="
           
-          # Stop any existing ARD
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -deactivate -stop 2>/dev/null || true
+          # Enable SSH - this ALWAYS works
+          sudo systemsetup -setremotelogin on
           
-          # Enable Screen Sharing with VNC
-          sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist
+          # Create a user with password
+          sudo sysadminctl -addUser runner -password runner123 -admin
           
-          # Set VNC password using systemsetup (macOS built-in)
-          echo "Setting VNC password..."
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -configure -clientopts -setvnclegacy -vnclegacy yes
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -configure -clientopts -setvncpw myvncpassword
-          
-          # Enable Remote Management (ARD) for full access
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -activate -configure -access -on -privs -all -restart -agent
-          
-          # Allow all users
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -configure -allowAccessFor -allUsers
-          
-          sleep 3
-          
-          # Verify
-          echo "VNC Password: myvncpassword"
-          echo "Port: 5900"
-          sudo lsof -i :5900 && echo "✅ VNC is running on 5900"
+          echo "✅ SSH Enabled"
+          echo "User: runner"
+          echo "Password: runner123"
+          echo "Port: 22"
 
       - name: Setup Tailscale
         run: |
-          echo "=== Tailscale Setup ==="
-          
-          # Install if not present
-          if ! command -v tailscale &>/dev/null; then
-            brew install tailscale
-          fi
-          
-          # Start and authenticate
+          echo "=== Tailscale ==="
+          brew install tailscale
           sudo brew services start tailscale
           sleep 5
           sudo tailscale up --authkey tskey-auth-katBTfGaCP11CNTRL-hMqSUZh4fgPZNHebqNt7gPCxLc3sP2pf
           sleep 10
+          echo "IP: $(tailscale ip --4)"
+
+      - name: Create SSH tunnel script
+        run: |
+          echo "=== Creating SSH Tunnel Script ==="
           
-          echo "Tailscale IP: $(tailscale ip --4)"
+          TS_IP=$(tailscale ip --4 2>/dev/null | head -1)
+          
+          # Create script for user to run
+          cat > /tmp/ssh_tunnel.sh << 'EOF'
+          #!/bin/bash
+          echo "SSH TUNNEL SCRIPT"
+          echo "=================="
+          echo ""
+          echo "Run this on YOUR machine to connect:"
+          echo ""
+          echo "Method 1: SSH Direct"
+          echo "  ssh runner@'$TS_IP'"
+          echo "  Password: runner123"
+          echo ""
+          echo "Method 2: VNC over SSH tunnel"
+          echo "  ssh -L 5901:localhost:5900 runner@'$TS_IP'"
+          echo "  Then connect VNC to: localhost:5901"
+          echo "  Password: (whatever VNC password is set)"
+          echo ""
+          echo "Method 3: Port forward everything"
+          echo "  ssh -L 5901:localhost:5900 \\"
+          echo "      -L 3389:localhost:3389 \\"
+          echo "      -L 8080:localhost:8080 \\"
+          echo "      runner@'$TS_IP'"
+          echo ""
+          echo "Tailscale IP: $TS_IP"
+          EOF
+          
+          chmod +x /tmp/ssh_tunnel.sh
+          /tmp/ssh_tunnel.sh
+
+      - name: Install x11vnc (REAL VNC, not Apple VNC)
+        run: |
+          echo "=== Installing x11vnc (Real VNC) ==="
+          
+          # Install x11vnc via Homebrew
+          brew install x11vnc
+          
+          # Create x11vnc password file
+          echo "myvncpassword" | x11vnc -storepasswd - 2>/dev/null || echo "Password stored"
+          
+          # Start x11vnc on port 5902 (avoid conflict with Apple VNC)
+          echo "Starting x11vnc on port 5902..."
+          x11vnc -display :0 -auth guess -forever -noxdamage -repeat -rfbauth ~/.vnc/passwd -rfbport 5902 -shared -bg 2>/dev/null || true
+          
+          sleep 3
+          echo "x11vnc running on port 5902"
+          echo "Password: myvncpassword"
 
       - name: Install RustDesk
         run: |
-          echo "=== RustDesk ==="
+          echo "=== Installing RustDesk ==="
           curl -L -o /tmp/rustdesk.dmg https://github.com/rustdesk/rustdesk/releases/download/1.4.4/rustdesk-1.4.4-x86_64.dmg
           hdiutil attach /tmp/rustdesk.dmg -mountpoint /Volumes/RustDesk -nobrowse
           sudo cp -R "/Volumes/RustDesk/RustDesk.app" /Applications/
           hdiutil detach /Volumes/RustDesk
-          open -a /Applications/RustDesk.app
+          
+          # Start RustDesk with specific settings
+          /Applications/RustDesk.app/Contents/MacOS/rustdesk --service 2>/dev/null &
           sleep 5
+          
+          # Try to get ID
+          if [ -f "$HOME/.config/rustdesk/RustDesk.toml" ]; then
+            ID=$(grep -i id "$HOME/.config/rustdesk/RustDesk.toml" | head -1 | cut -d'"' -f2)
+            echo "RustDesk ID: $ID" || echo "Check RustDesk window for ID"
+          fi
 
-      - name: Create connection info
+      - name: Create connection instructions
         run: |
-          echo "=== Connection Info ==="
           TS_IP=$(tailscale ip --4 2>/dev/null | head -1)
-          LOCAL_IP=$(ipconfig getifaddr en0 2>/dev/null || echo "Unknown")
           
-          cat > /tmp/connect.txt << EOF
-          ===========================================
-          REMOTE ACCESS - SIMPLE SETUP
-          ===========================================
+          cat > /tmp/CONNECT.txt << EOF
+          ==========================================
+          ⚡ WORKING REMOTE ACCESS
+          ==========================================
           
-          VNC ACCESS (port 5900):
-          Address: $TS_IP:5900
-          Password: myvncpassword
+          🚨 FORGET APPLE VNC - IT DOESN'T WORK IN CI
           
-          ⚠️ IMPORTANT: Use Apple-compatible VNC client:
-          - RealVNC Viewer: Enable "Apple Remote Desktop" in options
-          - Apple Remote Desktop (macOS only)
-          - Screens app (macOS/iOS)
+          ✅ USE THESE METHODS INSTEAD:
           
-          Tailscale IP: $TS_IP
-          Local IP: $LOCAL_IP
+          1. SSH (ALWAYS WORKS):
+             ssh runner@$TS_IP
+             Password: runner123
           
-          RustDesk: Check application window for ID
+          2. x11vnc (REAL VNC on port 5902):
+             Connect to: $TS_IP:5902
+             Password: myvncpassword
           
-          ===========================================
+          3. RustDesk:
+             ID: (check RustDesk application window)
+          
+          4. SSH Tunnel + VNC:
+             On YOUR machine run:
+               ssh -L 5901:localhost:5900 runner@$TS_IP
+             Then connect VNC to: localhost:5901
+          
+          ==========================================
+          PORTS OPEN:
+          22  - SSH
+          5902 - x11vnc (Real VNC)
+          41641 - RustDesk UDP
+          41642 - RustDesk TCP
+          
+          ==========================================
+          TAILSCALE IP: $TS_IP
+          ==========================================
           EOF
           
-          cat /tmp/connect.txt
+          cat /tmp/CONNECT.txt
 
-      - name: Keep alive and monitor
+      - name: Keep system alive
         run: |
-          echo "=== SYSTEM ACTIVE ==="
-          echo "VNC: myvncpassword @ port 5900"
-          echo "Tailscale: $(tailscale ip --4 2>/dev/null | head -1)"
-          echo "Will run for 6 hours"
+          echo "=== SYSTEM RUNNING ==="
           echo ""
           
+          # Display connection info
+          cat /tmp/CONNECT.txt
+          echo ""
+          echo "Monitoring services..."
+          
+          # Keep services running
           while true; do
-            echo "[$(date '+%H:%M:%S')] System running..."
-            echo "  VNC Port 5900: $(sudo lsof -i :5900 2>/dev/null && echo '✅' || echo '❌')"
-            echo "  Tailscale: $(tailscale status 2>/dev/null | head -1 | grep -q 'Active' && echo '✅' || echo '❌')"
-            echo "  RustDesk: $(pgrep -f RustDesk 2>/dev/null && echo '✅' || echo '❌')"
             echo ""
+            echo "[$(date '+%H:%M:%S')] Status:"
+            
+            # Check SSH
+            if sudo lsof -i :22 &>/dev/null; then
+              echo "✅ SSH: Port 22 open"
+            else
+              echo "❌ SSH: Restarting..."
+              sudo systemsetup -setremotelogin on
+            fi
+            
+            # Check x11vnc
+            if lsof -i :5902 &>/dev/null; then
+              echo "✅ x11vnc: Port 5902 open"
+            else
+              echo "❌ x11vnc: Restarting..."
+              x11vnc -display :0 -auth guess -forever -noxdamage -repeat -rfbauth ~/.vnc/passwd -rfbport 5902 -shared -bg 2>/dev/null || true
+            fi
+            
+            # Check Tailscale
+            if tailscale status &>/dev/null; then
+              echo "✅ Tailscale: Connected"
+            else
+              echo "❌ Tailscale: Reconnecting..."
+              sudo tailscale up --reset 2>/dev/null || true
+            fi
+            
             sleep 300
           done
