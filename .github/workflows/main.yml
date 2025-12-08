@@ -251,47 +251,7 @@ jobs:
           screenshot_file="$SCREENSHOT_DIR/10_after_quit_$(date +%H%M%S).png"
           screencapture -x "$screenshot_file"
 
-      - name: Capture Application Information
-        run: |
-          echo "=== Capturing Application Information ==="
-          
-          INFO_FILE="$SCREENSHOT_DIR/application_info.txt"
-          
-          echo "AnyDesk Test Report" > "$INFO_FILE"
-          echo "===================" >> "$INFO_FILE"
-          echo "Test Date: $(date)" >> "$INFO_FILE"
-          echo "macOS Version: $(sw_vers -productVersion)" >> "$INFO_FILE"
-          
-          if [ -d "/Applications/AnyDesk.app" ]; then
-            echo "AnyDesk Location: /Applications/AnyDesk.app" >> "$INFO_FILE"
-            
-            # Get version
-            VERSION=$(defaults read "/Applications/AnyDesk.app/Contents/Info" CFBundleShortVersionString 2>/dev/null || echo "Unknown")
-            echo "AnyDesk Version: $VERSION" >> "$INFO_FILE"
-            
-            # Get bundle size
-            SIZE=$(du -sh "/Applications/AnyDesk.app" 2>/dev/null | awk '{print $1}' || echo "Unknown")
-            echo "Application Size: $SIZE" >> "$INFO_FILE"
-            
-            # Get bundle identifier
-            BUNDLE_ID=$(defaults read "/Applications/AnyDesk.app/Contents/Info" CFBundleIdentifier 2>/dev/null || echo "Unknown")
-            echo "Bundle Identifier: $BUNDLE_ID" >> "$INFO_FILE"
-          else
-            echo "AnyDesk Location: Not found" >> "$INFO_FILE"
-          fi
-          
-          echo "" >> "$INFO_FILE"
-          echo "Screenshots Taken:" >> "$INFO_FILE"
-          find "$SCREENSHOT_DIR" -name "*.png" -exec basename {} \; | sort >> "$INFO_FILE"
-          
-          echo "" >> "$INFO_FILE"
-          echo "Test Summary:" >> "$INFO_FILE"
-          echo "- Downloaded AnyDesk successfully" >> "$INFO_FILE"
-          echo "- Installed to Applications folder" >> "$INFO_FILE"
-          echo "- Application launched successfully" >> "$INFO_FILE"
-          echo "- ${$(find "$SCREENSHOT_DIR" -name "*.png" | wc -l | tr -d ' ')} screenshots captured" >> "$INFO_FILE"
-          
-          echo "✅ Application info saved"
+  
 
       - name: Upload Screenshots
         uses: actions/upload-artifact@v4
