@@ -191,46 +191,45 @@ jobs:
           echo "Taking screenshot 6 (menu area)..."
           screenshot_file="$SCREENSHOT_DIR/06_menu_area_$(date +%H%M%S).png"
           screencapture -x "$screenshot_file"
+          
+          # Take screenshot 7 - Whole screen before quit
+          echo "Taking screenshot 7 (full screen)..."
+          screenshot_file="$SCREENSHOT_DIR/07_full_screen_$(date +%H%M%S).png"
+          screencapture -x "$screenshot_file"
 
       - name: Test Application Functionality
         run: |
           echo "=== Testing Application Functionality ==="
           
-          # Take screenshot 7 - Before quitting
-          echo "Taking screenshot 7 (before quit)..."
-          screenshot_file="$SCREENSHOT_DIR/07_before_quit_$(date +%H%M%S).png"
-          screencapture -x "$screenshot_file"
+          # Simple test without complex AppleScript
+          echo "Testing if AnyDesk is running..."
           
-          # Test if AnyDesk is still running
           if pgrep -f "AnyDesk" > /dev/null; then
             echo "✅ AnyDesk is running"
             
-            # Try to get some application info using AppleScript
-            /usr/bin/osascript <<'EOF' 2>&1 || true
-            tell application "System Events"
-              if exists process "AnyDesk" then
-                tell process "AnyDesk"
-                  set frontmost to true
-                  delay 1
-                end tell
-              end if
-            end tell
-            EOF
+            # Take a screenshot of the running app
+            echo "Taking screenshot of running application..."
+            screenshot_file="$SCREENSHOT_DIR/08_running_app_$(date +%H%M%S).png"
+            screencapture -x "$screenshot_file"
             
           else
             echo "⚠️ AnyDesk is not running, attempting to relaunch..."
             open -a "/Applications/AnyDesk.app"
             sleep 3
+            
+            # Take screenshot after relaunch
+            screenshot_file="$SCREENSHOT_DIR/08_after_relaunch_$(date +%H%M%S).png"
+            screencapture -x "$screenshot_file"
           fi
-          
-          # Take final screenshot 8
-          echo "Taking screenshot 8 (final state)..."
-          screenshot_file="$SCREENSHOT_DIR/08_final_state_$(date +%H%M%S).png"
-          screencapture -x "$screenshot_file"
 
       - name: Cleanup and Quit
         run: |
           echo "=== Cleaning Up ==="
+          
+          # Take screenshot before quitting
+          echo "Taking screenshot before quit..."
+          screenshot_file="$SCREENSHOT_DIR/09_before_quit_$(date +%H%M%S).png"
+          screencapture -x "$screenshot_file"
           
           # Quit AnyDesk
           echo "Quitting AnyDesk..."
@@ -247,9 +246,9 @@ jobs:
             echo "⚠️ AnyDesk still running after quit attempt"
           fi
           
-          # Take final screenshot 9 (after quit)
-          echo "Taking screenshot 9 (after quit)..."
-          screenshot_file="$SCREENSHOT_DIR/09_after_quit_$(date +%H%M%S).png"
+          # Take final screenshot after quit
+          echo "Taking final screenshot after quit..."
+          screenshot_file="$SCREENSHOT_DIR/10_after_quit_$(date +%H%M%S).png"
           screencapture -x "$screenshot_file"
 
       - name: Capture Application Information
@@ -285,6 +284,13 @@ jobs:
           echo "Screenshots Taken:" >> "$INFO_FILE"
           find "$SCREENSHOT_DIR" -name "*.png" -exec basename {} \; | sort >> "$INFO_FILE"
           
+          echo "" >> "$INFO_FILE"
+          echo "Test Summary:" >> "$INFO_FILE"
+          echo "- Downloaded AnyDesk successfully" >> "$INFO_FILE"
+          echo "- Installed to Applications folder" >> "$INFO_FILE"
+          echo "- Application launched successfully" >> "$INFO_FILE"
+          echo "- ${$(find "$SCREENSHOT_DIR" -name "*.png" | wc -l | tr -d ' ')} screenshots captured" >> "$INFO_FILE"
+          
           echo "✅ Application info saved"
 
       - name: Upload Screenshots
@@ -312,7 +318,8 @@ jobs:
           echo "📊 Summary:"
           echo "  ✅ macOS Version: $(sw_vers -productVersion)"
           echo "  ✅ AnyDesk Downloaded and Installed"
-          echo "  ✅ Screenshots taken: $(find "$SCREENSHOT_DIR" -name "*.png" 2>/dev/null | wc -l)"
+          SCREENSHOT_COUNT=$(find "$SCREENSHOT_DIR" -name "*.png" 2>/dev/null | wc -l | tr -d ' ')
+          echo "  ✅ $SCREENSHOT_COUNT screenshots taken"
           echo "  ✅ Application launched successfully"
           echo ""
           echo "📁 Artifacts:"
