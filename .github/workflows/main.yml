@@ -1,308 +1,118 @@
-name: AnyDesk macOS Testing
+name: Run sshx.io Connection
 
 on:
   workflow_dispatch:
 
 jobs:
-  anydesk-test:
+  sshx-connection:
     runs-on: macos-latest
-    timeout-minutes: 20
+    timeout-minutes: 15  # 10 minutes + buffer
 
     steps:
       - name: Check macOS Version
         run: |
-          echo "=== macOS Version ==="
+          echo "=== System Information ==="
           sw_vers
-          echo "RUNNER_OS=$RUNNER_OS" >> $GITHUB_ENV
+          echo "Hostname: $(hostname)"
+          echo "IP Info:"
+          ifconfig en0 | grep "inet " || true
+          echo "User: $(whoami)"
 
-      - name: Create Screenshot Directory
+      - name: Install and Run sshx
+        id: sshx
         run: |
-          echo "=== Creating Screenshot Directory ==="
-          mkdir -p screenshots
-          echo "SCREENSHOT_DIR=$(pwd)/screenshots" >> $GITHUB_ENV
-
-      - name: Initial Screenshot (Clean Desktop)
-        run: |
-          echo "=== Taking Initial Screenshot ==="
-          timestamp=$(date +%Y%m%d_%H%M%S)
-          screenshot_file="$SCREENSHOT_DIR/01_initial_desktop_$timestamp.png"
-          screencapture -x "$screenshot_file"
-          echo "✅ Initial screenshot saved: $screenshot_file"
-
-      - name: Download AnyDesk
-        run: |
-          echo "=== Downloading AnyDesk ==="
+          echo "=== Installing and Running sshx.io ==="
           
-          # Create download directory
-          mkdir -p downloads
+          # Install sshx
+          echo "Installing sshx.io..."
+          curl -sSf https://sshx.io/get | sh
           
-          # Download AnyDesk DMG
-          ANYDESK_URL="https://download.anydesk.com/anydesk.dmg"
-          DMG_PATH="downloads/AnyDesk.dmg"
+          # Run sshx in background and capture URL
+          echo "Starting sshx connection..."
           
-          echo "Downloading AnyDesk from: $ANYDESK_URL"
-          curl -L -o "$DMG_PATH" "$ANYDESK_URL"
+          # Create a script to run sshx and extract URL
+          cat > run_sshx.sh << 'EOF'
+#!/bin/bash
+# Run sshx and capture the connection URL
+exec 5>&1
+OUTPUT=$(sshx 2>&1 | tee /dev/fd/5)
+URL=$(echo "$OUTPUT" | grep -o 'https://sshx.io/[a-zA-Z0-9-]*' | head -1)
+if [ -n "$URL" ]; then
+  echo "SSHX_URL=$URL" >> $GITHUB_ENV
+  echo "url_output=$URL" >> $GITHUB_OUTPUT
+  echo "✅ sshx URL captured: $URL"
+else
+  echo "❌ Could not extract sshx URL from output"
+fi
+EOF
           
-          # Verify download
-          if [ -f "$DMG_PATH" ]; then
-            file_size=$(ls -lh "$DMG_PATH" | awk '{print $5}')
-            echo "✅ Download successful: $file_size"
-            echo "DMG_PATH=$DMG_PATH" >> $GITHUB_ENV
-          else
-            echo "❌ Download failed!"
-            exit 1
+          chmod +x run_sshx.sh
+          
+          # Run sshx in background
+          ./run_sshx.sh &
+          SSHX_PID=$!
+          
+          # Wait a moment for URL to be captured
+          sleep 3
+          
+          # Save PID for later
+          echo "SSHX_PID=$SSHX_PID" >> $GITHUB_ENV
+          
+          # Display the URL if captured
+          if [ -n "${{ env.SSHX_URL }}" ]; then
+            echo "✅ SSHX Connection URL: ${{ env.SSHX_URL }}"
           fi
 
-      - name: Install AnyDesk
+      - name: Display Connection URL
         run: |
-          echo "=== Installing AnyDesk ==="
-          
-          # Mount DMG
-          echo "Mounting DMG..."
-          MOUNT_PATH="/Volumes/AnyDesk"
-          hdiutil attach "$DMG_PATH" -nobrowse -quiet
-          
-          # Check DMG contents
-          echo "Contents of DMG:"
-          ls -la "/Volumes/AnyDesk" || true
-          
-          # Install to Applications
-          echo "Installing to Applications..."
-          if [ -f "/Volumes/AnyDesk/AnyDesk.app" ]; then
-            cp -R "/Volumes/AnyDesk/AnyDesk.app" "/Applications/"
-            echo "✅ AnyDesk installed to Applications"
-          else
-            # Try to find any .app file
-            APP_FILE=$(find "/Volumes/AnyDesk" -name "*.app" -maxdepth 1 | head -1)
-            if [ -n "$APP_FILE" ]; then
-              cp -R "$APP_FILE" "/Applications/"
-              echo "✅ AnyDesk installed from: $(basename "$APP_FILE")"
-            else
-              echo "❌ No .app file found in DMG!"
-              exit 1
-            fi
-          fi
-          
-          # Unmount DMG
-          hdiutil detach "/Volumes/AnyDesk" -force 2>/dev/null || true
-          
-          # Verify installation
-          if [ -d "/Applications/AnyDesk.app" ]; then
-            echo "✅ Installation verified: /Applications/AnyDesk.app"
-            # Get version info
-            if [ -f "/Applications/AnyDesk.app/Contents/Info.plist" ]; then
-              VERSION=$(defaults read "/Applications/AnyDesk.app/Contents/Info" CFBundleShortVersionString 2>/dev/null || echo "Unknown")
-              echo "AnyDesk Version: $VERSION"
-              echo "ANYDESK_VERSION=$VERSION" >> $GITHUB_ENV
-            fi
-          else
-            echo "❌ Installation failed!"
-            exit 1
-          fi
+          echo "=========================================="
+          echo "🌐 SSHX CONNECTION ESTABLISHED!"
+          echo "=========================================="
+          echo ""
+          echo "🔗 Your connection URL is:"
+          echo "   ${{ env.SSHX_URL }}"
+          echo ""
+          echo "📋 Copy this URL and open it in your browser to access"
+          echo "   this GitHub Actions runner."
+          echo ""
+          echo "⏱️  This workflow will remain active for 10 minutes..."
+          echo "=========================================="
 
-      - name: Screenshot and Click After Installation
+      - name: Keep Workflow Running
         run: |
-          echo "=== Screenshot and Click After Installation ==="
+          echo "=== Keeping workflow active for 10 minutes ==="
+          echo "Start time: $(date)"
+          echo "Will run until: $(date -v+10M)"
+          echo ""
+          echo "⚠️  DO NOT CANCEL THIS WORKFLOW"
+          echo "The sshx connection will remain active for 10 minutes"
+          echo "You can now connect using the URL above"
+          echo ""
           
-          # First screenshot after installation
-          timestamp=$(date +%Y%m%d_%H%M%S)
-          screenshot_file="$SCREENSHOT_DIR/02_after_install_$timestamp.png"
-          screencapture -x "$screenshot_file"
-          echo "✅ Post-installation screenshot saved: $screenshot_file"
-          
-          # Install cliclick if not already installed
-          if ! command -v cliclick &> /dev/null; then
-            echo "Installing cliclick for clicking..."
-            brew install cliclick
-          fi
-          
-          # Perform click at coordinates (210, 563)
-          echo "Performing click at coordinates (210, 563)..."
-          cliclick c:210,563
-          
-          # Wait for click to register
-          sleep 2
-          
-          # Take screenshot after click
-          screenshot_file="$SCREENSHOT_DIR/03_after_click_210_563_$(date +%H%M%S).png"
-          screencapture -x "$screenshot_file"
-          echo "✅ Screenshot after click saved: $screenshot_file"
-
-      - name: Launch AnyDesk
-        run: |
-          echo "=== Launching AnyDesk ==="
-          
-          # Clean up any existing instances
-          pkill -f "AnyDesk" 2>/dev/null || true
-          sleep 2
-          
-          # Launch AnyDesk
-          echo "Launching AnyDesk..."
-          open -a "/Applications/AnyDesk.app"
-          
-          # Wait for app to launch
-          echo "Waiting for AnyDesk to launch..."
-          for i in {1..15}; do
-            if pgrep -f "AnyDesk" > /dev/null; then
-              echo "✅ AnyDesk process found (attempt $i)"
-              break
+          # Keep the workflow running
+          for i in {1..600}; do
+            if [ $((i % 30)) -eq 0 ]; then
+              echo "[$(date)] Still running... ($i seconds elapsed)"
             fi
             sleep 1
           done
           
-          # Wait for UI to load
-          echo "Waiting for UI to load..."
-          sleep 5
-          
-          # Take screenshot after launch
-          screenshot_file="$SCREENSHOT_DIR/04_after_launch_$(date +%Y%m%d_%H%M%S).png"
-          screencapture -x "$screenshot_file"
-          echo "✅ Launch screenshot saved"
+          echo "✅ 10 minutes completed"
 
-      - name: Take Application Screenshots
-        run: |
-          echo "=== Taking Application Screenshots ==="
-          
-          # Get screen dimensions
-          SCREEN_INFO=$(system_profiler SPDisplaysDataType 2>/dev/null | grep -A1 "Resolution:" | tail -1 | tr -d ' ' | sed 's/[^0-9x]//g')
-          if [ -z "$SCREEN_INFO" ] || [ "$SCREEN_INFO" = "0x0" ]; then
-            SCREEN_INFO="1440x900"
-            echo "⚠️ Using default screen resolution: $SCREEN_INFO"
-          fi
-          
-          WIDTH=$(echo "$SCREEN_INFO" | cut -d'x' -f1)
-          HEIGHT=$(echo "$SCREEN_INFO" | cut -d'x' -f2)
-          
-          echo "Screen: ${WIDTH}x${HEIGHT}"
-          
-          # Take screenshot 5 - Center of screen
-          echo "Taking screenshot 5 (center)..."
-          screenshot_file="$SCREENSHOT_DIR/05_center_ui_$(date +%H%M%S).png"
-          screencapture -x "$screenshot_file"
-          sleep 1
-          
-          # Click in center (where AnyDesk ID might be displayed)
-          echo "Clicking at screen center..."
-          CENTER_X=$((WIDTH / 2))
-          CENTER_Y=$((HEIGHT / 2))
-          cliclick c:$CENTER_X,$CENTER_Y 2>/dev/null || true
-          sleep 1
-          
-          # Take screenshot 6 - After center click
-          echo "Taking screenshot 6 (after center click)..."
-          screenshot_file="$SCREENSHOT_DIR/06_after_center_click_$(date +%H%M%S).png"
-          screencapture -x "$screenshot_file"
-          
-          # Click at specific coordinates (210, 563) again
-          echo "Clicking again at coordinates (210, 563)..."
-          cliclick c:210,563 2>/dev/null || true
-          sleep 1
-          
-          # Take screenshot 7 - After second click at 210,563
-          echo "Taking screenshot 7 (after second click at 210,563)..."
-          screenshot_file="$SCREENSHOT_DIR/07_after_210_563_click_$(date +%H%M%S).png"
-          screencapture -x "$screenshot_file"
-          
-          # Click in top-right (where menu/settings might be)
-          TOP_RIGHT_X=$((WIDTH - 100))
-          TOP_RIGHT_Y=100
-          echo "Clicking at top-right ($TOP_RIGHT_X, $TOP_RIGHT_Y)..."
-          cliclick c:$TOP_RIGHT_X,$TOP_RIGHT_Y 2>/dev/null || true
-          sleep 1
-          
-          # Take screenshot 8 - Menu area
-          echo "Taking screenshot 8 (menu area)..."
-          screenshot_file="$SCREENSHOT_DIR/08_menu_area_$(date +%H%M%S).png"
-          screencapture -x "$screenshot_file"
-
-      - name: Test Application Functionality
-        run: |
-          echo "=== Testing Application Functionality ==="
-          
-          # Simple test without complex AppleScript
-          echo "Testing if AnyDesk is running..."
-          
-          if pgrep -f "AnyDesk" > /dev/null; then
-            echo "✅ AnyDesk is running"
-            
-            # Take a screenshot of the running app
-            echo "Taking screenshot of running application..."
-            screenshot_file="$SCREENSHOT_DIR/09_running_app_$(date +%H%M%S).png"
-            screencapture -x "$screenshot_file"
-            
-          else
-            echo "⚠️ AnyDesk is not running, attempting to relaunch..."
-            open -a "/Applications/AnyDesk.app"
-            sleep 3
-            
-            # Take screenshot after relaunch
-            screenshot_file="$SCREENSHOT_DIR/09_after_relaunch_$(date +%H%M%S).png"
-            screencapture -x "$screenshot_file"
-          fi
-
-      - name: Cleanup and Quit
-        run: |
-          echo "=== Cleaning Up ==="
-          
-          # Take screenshot before quitting
-          echo "Taking screenshot before quit..."
-          screenshot_file="$SCREENSHOT_DIR/10_before_quit_$(date +%H%M%S).png"
-          screencapture -x "$screenshot_file"
-          
-          # Quit AnyDesk
-          echo "Quitting AnyDesk..."
-          osascript -e 'tell application "AnyDesk" to quit' 2>/dev/null || true
-          sleep 2
-          
-          # Force quit if needed
-          pkill -f "AnyDesk" 2>/dev/null || true
-          
-          # Verify quit
-          if ! pgrep -f "AnyDesk" > /dev/null; then
-            echo "✅ AnyDesk successfully quit"
-          else
-            echo "⚠️ AnyDesk still running after quit attempt"
-          fi
-          
-          # Take final screenshot after quit
-          echo "Taking final screenshot after quit..."
-          screenshot_file="$SCREENSHOT_DIR/11_after_quit_$(date +%H%M%S).png"
-          screencapture -x "$screenshot_file"
-
-      
-
-      - name: Upload Screenshots
-        uses: actions/upload-artifact@v4
-        with:
-          name: anydesk-screenshots
-          path: |
-            ${{ env.SCREENSHOT_DIR }}
-            downloads/AnyDesk.dmg
-          retention-days: 7
-
-      - name: Upload Summary
-        uses: actions/upload-artifact@v4
+      - name: Cleanup
         if: always()
-        with:
-          name: anydesk-test-summary
-          path: |
-            ${{ env.SCREENSHOT_DIR }}/application_info.txt
-          retention-days: 7
-
-      - name: Final Report
         run: |
-          echo "=== AnyDesk Test Complete ==="
-          echo ""
-          echo "📊 Summary:"
-          echo "  ✅ macOS Version: $(sw_vers -productVersion)"
-          echo "  ✅ AnyDesk Downloaded and Installed"
-          SCREENSHOT_COUNT=$(find "$SCREENSHOT_DIR" -name "*.png" 2>/dev/null | wc -l | tr -d ' ')
-          echo "  ✅ $SCREENSHOT_COUNT screenshots taken"
-          echo "  ✅ Click performed at coordinates (210, 563)"
-          echo "  ✅ Application launched successfully"
-          echo ""
-          echo "📁 Artifacts:"
-          echo "  • Screenshots uploaded as 'anydesk-screenshots'"
-          echo "  • Test summary uploaded as 'anydesk-test-summary'"
-          echo ""
-          echo "🎯 Test completed successfully!"
+          echo "=== Cleaning up sshx connection ==="
+          
+          # Kill sshx process if still running
+          if [ -n "$SSHX_PID" ] && ps -p $SSHX_PID > /dev/null 2>&1; then
+            echo "Stopping sshx process (PID: $SSHX_PID)..."
+            kill $SSHX_PID 2>/dev/null || true
+            sleep 2
+          fi
+          
+          # Additional cleanup
+          pkill -f "sshx" 2>/dev/null || true
+          
+          echo "✅ Cleanup complete"
+          echo "Workflow ended at: $(date)"
