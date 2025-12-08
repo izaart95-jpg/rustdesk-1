@@ -205,25 +205,110 @@ jobs:
           screencapture -x "$screenshot_file"
           echo "📸 Screenshot after click at (791, 221)"
 
-      - name: Top Bar Click Sequence
+      - name: Fast User Switching Test
         run: |
-          echo "=== Top Bar Click Sequence ==="
+          echo "=== Fast User Switching Test ==="
           
-          # Click at 785,7 (instead of 858,11)
-          echo "Clicking at coordinates (785, 7)..."
+          # Click at 785,7 (menu bar area)
+          echo "Clicking at coordinates (785, 7) - menu bar..."
           cliclick c:785,7
-          sleep 1
-          screenshot_file="$SCREENSHOT_DIR/11_after_785_7_$(date +%H%M%S).png"
+          sleep 2
+          screenshot_file="$SCREENSHOT_DIR/11_after_menu_bar_click_$(date +%H%M%S).png"
           screencapture -x "$screenshot_file"
-          echo "📸 Screenshot after click at (785, 7)"
+          echo "📸 Screenshot after menu bar click"
           
-          # Click at 710,73
-          echo "Clicking at coordinates (710, 73)..."
-          cliclick c:561,155
+          # Now click at 710,73 (where Hamiya user button should be)
+          echo "Clicking at coordinates (710, 73) - Hamiya user button..."
+          cliclick c:710,73
+          
+          echo "⚠️ IMPORTANT: Login window for 'Hamiya' should appear now"
+          echo "⚠️ Note: Login windows are secure dialogs and may not appear in screenshots"
+          
+          # Wait longer for login window to appear
+          echo "Waiting 5 seconds for login window to appear..."
+          sleep 5
+          
+          # Try multiple screenshot attempts for login window
+          echo "Attempting to capture login window (multiple attempts)..."
+          
+          for i in {1..5}; do
+            echo "Attempt $i/5 to capture login window..."
+            screenshot_file="$SCREENSHOT_DIR/12_login_window_attempt_${i}_$(date +%H%M%S).png"
+            screencapture -x "$screenshot_file"
+            echo "📸 Login window capture attempt $i"
+            sleep 1
+          done
+          
+          # Also try to check if we can see loginwindow process
+          echo "Checking for loginwindow processes..."
+          ps aux | grep -i loginwindow | grep -v grep || echo "No loginwindow processes found"
+          
+          # Try to check current user sessions
+          echo "Current logged in users:"
+          who || echo "Could not check logged in users"
+
+      - name: Handle Login Window (Alternative Methods)
+        run: |
+          echo "=== Trying Alternative Methods to Detect Login ==="
+          
+          # Method 1: Check for Screen Locking
+          echo "Checking screen lock status..."
+          python3 -c "
+          import subprocess
+          import sys
+          
+          # Try to check if screen is locked
+          try:
+              # This command might show if screen is locked
+              result = subprocess.run(['/usr/libexec/PlistBuddy', '-c', 'Print :CGSSessionScreenIsLocked', '/dev/stdin', '2>/dev/null'], 
+                                    capture_output=True, text=True, input='')
+              print(f'Screen lock check: {result.stdout.strip()}')
+          except:
+              print('Could not check screen lock status')
+          
+          # Check for loginwindow process
+          result = subprocess.run(['pgrep', '-x', 'loginwindow'], capture_output=True, text=True)
+          if result.returncode == 0:
+              print('✅ loginwindow process is running')
+          else:
+              print('❌ loginwindow process is not running')
+          " || echo "Python check failed"
+          
+          # Method 2: Check console user
+          echo "Current console user info:"
+          echo "Console User: $(stat -f '%Su' /dev/console)" || echo "Could not get console user"
+          
+          # Method 3: Check for any secure input processes
+          echo "Secure input processes:"
+          ps aux | grep -i "security" | grep -v grep | head -5 || echo "No relevant security processes"
+          
+          # Take more screenshots in case login window appeared
+          echo "Taking additional screenshots..."
+          for i in {1..3}; do
+            screenshot_file="$SCREENSHOT_DIR/13_additional_${i}_$(date +%H%M%S).png"
+            screencapture -x "$screenshot_file"
+            sleep 1
+          done
+
+      - name: Attempt to Cancel Login
+        run: |
+          echo "=== Attempting to Cancel Any Login Prompt ==="
+          
+          # Press Escape key multiple times to cancel any dialogs
+          echo "Pressing Escape to cancel any login prompts..."
+          for i in {1..5}; do
+            osascript -e 'tell application "System Events" to key code 53'  # Escape key
+            sleep 0.5
+          done
+          
+          # Also try Command+Period (cancel)
+          osascript -e 'tell application "System Events" to keystroke "." using command down'
           sleep 1
-          screenshot_file="$SCREENSHOT_DIR/12_after_710_73_$(date +%H%M%S).png"
+          
+          # Take screenshot after escape attempts
+          screenshot_file="$SCREENSHOT_DIR/14_after_escape_$(date +%H%M%S).png"
           screencapture -x "$screenshot_file"
-          echo "📸 Screenshot after click at (710, 73)"
+          echo "📸 Screenshot after escape attempts"
 
       - name: Continuous Screenshot Capture
         run: |
@@ -231,7 +316,7 @@ jobs:
           echo "Taking 1 screenshot every second for 15 seconds..."
           
           for i in {1..15}; do
-            screenshot_file="$SCREENSHOT_DIR/13_continuous_${i}_$(date +%H%M%S).png"
+            screenshot_file="$SCREENSHOT_DIR/15_continuous_${i}_$(date +%H%M%S).png"
             screencapture -x "$screenshot_file"
             echo "📸 Screenshot $i/15: $screenshot_file"
             
@@ -279,6 +364,12 @@ jobs:
           system_profiler SPDisplaysDataType 2>/dev/null | grep -A1 "Resolution:" | tail -1 >> "$INFO_FILE" || echo "Unknown" >> "$INFO_FILE"
           echo "" >> "$INFO_FILE"
           
+          # Check current session info
+          echo "Current Session Info:" >> "$INFO_FILE"
+          echo "Console User: $(stat -f '%Su' /dev/console 2>/dev/null || echo 'Unknown')" >> "$INFO_FILE"
+          who >> "$INFO_FILE" 2>/dev/null || echo "Could not check logged in users" >> "$INFO_FILE"
+          echo "" >> "$INFO_FILE"
+          
           echo "Test Actions Performed:" >> "$INFO_FILE"
           echo "----------------------" >> "$INFO_FILE"
           echo "1. Enabled MultipleSessionEnabled and set MultipleSessionName" >> "$INFO_FILE"
@@ -290,16 +381,28 @@ jobs:
           echo "   - Clicked at (256, 242)" >> "$INFO_FILE"
           echo "   - Clicked at (827, 202)" >> "$INFO_FILE"
           echo "   - Clicked at (791, 221)" >> "$INFO_FILE"
-          echo "7. Top bar click sequence:" >> "$INFO_FILE"
-          echo "   - Clicked at (785, 7)" >> "$INFO_FILE"
-          echo "   - Clicked at (710, 73)" >> "$INFO_FILE"
+          echo "7. Fast User Switching test:" >> "$INFO_FILE"
+          echo "   - Clicked at (785, 7) - Menu bar" >> "$INFO_FILE"
+          echo "   - Clicked at (710, 73) - Hamiya user button" >> "$INFO_FILE"
+          echo "   - Note: Login window may not appear in screenshots due to security restrictions" >> "$INFO_FILE"
           echo "8. Continuous screenshot capture: 15 screenshots (1 per second)" >> "$INFO_FILE"
+          echo "" >> "$INFO_FILE"
+          
+          echo "IMPORTANT NOTES:" >> "$INFO_FILE"
+          echo "----------------" >> "$INFO_FILE"
+          echo "1. Login windows and secure dialogs often cannot be captured by screencapture" >> "$INFO_FILE"
+          echo "2. The click at (710, 73) should trigger the 'Hamiya' login window" >> "$INFO_FILE"
+          echo "3. If login window doesn't appear, it could be due to:" >> "$INFO_FILE"
+          echo "   - Fast User Switching not properly enabled" >> "$INFO_FILE"
+          echo "   - Security restrictions preventing automated login prompts" >> "$INFO_FILE"
+          echo "   - The coordinates may need adjustment for your screen resolution" >> "$INFO_FILE"
           echo "" >> "$INFO_FILE"
           
           echo "Screenshots Captured:" >> "$INFO_FILE"
           echo "-------------------" >> "$INFO_FILE"
           find "$SCREENSHOT_DIR" -name "*.png" -exec basename {} \; | sort >> "$INFO_FILE"
           
+          echo "" >> "$INFO_FILE"
           echo "Total screenshots: $(find "$SCREENSHOT_DIR" -name "*.png" | wc -l)" >> "$INFO_FILE"
           
           echo "✅ System information saved"
@@ -346,18 +449,14 @@ jobs:
           SCREENSHOT_COUNT=$(find "$SCREENSHOT_DIR" -name "*.png" 2>/dev/null | wc -l | tr -d ' ')
           echo "  ✅ $SCREENSHOT_COUNT screenshots captured"
           echo ""
-          echo "🎯 Test Tasks Completed:"
-          echo "  1. Enabled multiple sessions"
-          echo "  2. Created admin user 'Hamiya'"
-          echo "  3. Opened System Settings"
-          echo "  4. Clicked at (507, 363)"
-          echo "  5. Searched for 'Fast User Switching'"
-          echo "  6. Click sequence: (256, 242) → (827, 202) → (791, 221)"
-          echo "  7. Top bar clicks: (785, 7) → (710, 73)"
-          echo "  8. Continuous screenshots: 15 screenshots (1 per second)"
+          echo "⚠️ IMPORTANT NOTE ABOUT LOGIN WINDOW:"
+          echo "  The click at (710, 73) should trigger the 'Hamiya' login window."
+          echo "  However, macOS security restrictions often prevent login windows"
+          echo "  from appearing in automated screenshots."
+          echo "  Check the screenshots for visual feedback of the click action."
           echo ""
           echo "📁 Artifacts:"
           echo "  • Screenshots uploaded as 'macos-user-management-screenshots'"
           echo "  • Test summary uploaded as 'macos-user-management-summary'"
           echo ""
-          echo "✅ All tasks completed successfully!"
+          echo "✅ All test steps executed!"
