@@ -181,77 +181,61 @@ jobs:
         run: |
           echo "=== Click Sequence After Search ==="
           
-          # Wait a moment for UI to settle
+          # Wait a moment for UI to stabilize
           sleep 1
           
-          # Click at (256, 242)
+          # Click at 256,242
           echo "Click 1: Clicking at coordinates (256, 242)..."
-          screenshot_file="$SCREENSHOT_DIR/08_before_click_256_242_$(date +%H%M%S).png"
-          screencapture -x "$screenshot_file"
-          echo "📸 Screenshot before click 1 saved"
-          
           cliclick c:256,242
           sleep 1
           
-          screenshot_file="$SCREENSHOT_DIR/09_after_click_256_242_$(date +%H%M%S).png"
+          # Take screenshot after first click
+          screenshot_file="$SCREENSHOT_DIR/08_after_click_256_242_$(date +%H%M%S).png"
           screencapture -x "$screenshot_file"
-          echo "✅ Click 1 completed at (256, 242)"
+          echo "📸 Screenshot after click (256, 242) saved"
           
-          # Click at (827, 202)
+          # Click at 827,202
           echo "Click 2: Clicking at coordinates (827, 202)..."
-          screenshot_file="$SCREENSHOT_DIR/10_before_click_827_202_$(date +%H%M%S).png"
-          screencapture -x "$screenshot_file"
-          echo "📸 Screenshot before click 2 saved"
-          
           cliclick c:827,202
           sleep 1
           
-          screenshot_file="$SCREENSHOT_DIR/11_after_click_827_202_$(date +%H%M%S).png"
+          # Take screenshot after second click
+          screenshot_file="$SCREENSHOT_DIR/09_after_click_827_202_$(date +%H%M%S).png"
           screencapture -x "$screenshot_file"
-          echo "✅ Click 2 completed at (827, 202)"
+          echo "📸 Screenshot after click (827, 202) saved"
           
-          # Click at (791, 221)
+          # Click at 791,221
           echo "Click 3: Clicking at coordinates (791, 221)..."
-          screenshot_file="$SCREENSHOT_DIR/12_before_click_791_221_$(date +%H%M%S).png"
-          screencapture -x "$screenshot_file"
-          echo "📸 Screenshot before click 3 saved"
-          
           cliclick c:791,221
           sleep 1
           
-          screenshot_file="$SCREENSHOT_DIR/13_after_click_791_221_$(date +%H%M%S).png"
+          # Take screenshot after third click
+          screenshot_file="$SCREENSHOT_DIR/10_after_click_791_221_$(date +%H%M%S).png"
           screencapture -x "$screenshot_file"
-          echo "✅ Click 3 completed at (791, 221)"
-          
-          # Take final screenshot of the sequence
-          echo "Taking final screenshot after click sequence..."
-          sleep 2
-          screenshot_file="$SCREENSHOT_DIR/14_final_after_sequence_$(date +%H%M%S).png"
-          screencapture -x "$screenshot_file"
-          echo "📸 Final screenshot after click sequence saved"
+          echo "📸 Screenshot after click sequence saved"
 
-      - name: Final Click at 26,8
+      - name: Final Click at 785,7 and Screenshot
         run: |
-          echo "=== Final Task: Click at (26, 8) ==="
+          echo "=== Final Task: Click at (785, 7) ==="
           
           # Take screenshot before final click
-          screenshot_file="$SCREENSHOT_DIR/15_before_final_click_26_8_$(date +%H%M%S).png"
+          screenshot_file="$SCREENSHOT_DIR/11_before_final_click_$(date +%H%M%S).png"
           screencapture -x "$screenshot_file"
           echo "📸 Screenshot before final click saved"
           
-          # Click at coordinates (26, 8)
-          echo "Clicking at coordinates (26, 8)..."
-          cliclick c:26,8
+          # Click at coordinates (785, 7)
+          echo "Clicking at coordinates (785, 7)..."
+          cliclick c:785,7
           
-          echo "✅ Final click performed at (26, 8)"
+          echo "✅ Final click performed at (785, 7)"
           
           # Wait briefly
           sleep 2
           
           # Take final screenshot
-          screenshot_file="$SCREENSHOT_DIR/16_after_final_click_26_8_$(date +%H%M%S).png"
+          screenshot_file="$SCREENSHOT_DIR/12_after_final_click_$(date +%H%M%S).png"
           screencapture -x "$screenshot_file"
-          echo "📸 Final screenshot after last click saved"
+          echo "📸 Final screenshot saved"
 
       - name: Capture System Information
         run: |
@@ -300,7 +284,17 @@ jobs:
           echo "   - Click at (256, 242)" >> "$INFO_FILE"
           echo "   - Click at (827, 202)" >> "$INFO_FILE"
           echo "   - Click at (791, 221)" >> "$INFO_FILE"
-          echo "7. Final click at (26, 8)" >> "$INFO_FILE"
+          echo "7. Final click at (785, 7)" >> "$INFO_FILE"
+          echo "" >> "$INFO_FILE"
+          
+          echo "Click Coordinates Summary:" >> "$INFO_FILE"
+          echo "------------------------" >> "$INFO_FILE"
+          echo "• Initial click: (507, 363)" >> "$INFO_FILE"
+          echo "• After search sequence:" >> "$INFO_FILE"
+          echo "   1. (256, 242)" >> "$INFO_FILE"
+          echo "   2. (827, 202)" >> "$INFO_FILE"
+          echo "   3. (791, 221)" >> "$INFO_FILE"
+          echo "• Final click: (785, 7)" >> "$INFO_FILE"
           echo "" >> "$INFO_FILE"
           
           echo "Screenshots Captured:" >> "$INFO_FILE"
@@ -318,7 +312,7 @@ jobs:
           pkill -f "System Settings" 2>/dev/null || true
           
           # Take one final desktop screenshot
-          screenshot_file="$SCREENSHOT_DIR/17_final_desktop_$(date +%H%M%S).png"
+          screenshot_file="$SCREENSHOT_DIR/13_final_desktop_$(date +%H%M%S).png"
           screencapture -x "$screenshot_file"
           echo "📸 Final desktop screenshot saved"
 
@@ -352,14 +346,13 @@ jobs:
           echo "  ✅ $SCREENSHOT_COUNT screenshots captured"
           echo "  ✅ All click sequences completed"
           echo ""
-          echo "🎯 Test Tasks Completed:"
-          echo "  1. Enabled multiple sessions with defaults write"
-          echo "  2. Created admin user 'Hamiya'"
-          echo "  3. Opened System Settings"
-          echo "  4. Clicked at (507, 363)"
-          echo "  5. Searched for 'Fast User Switching'"
-          echo "  6. Click sequence: (256, 242) → (827, 202) → (791, 221)"
-          echo "  7. Final click at (26, 8)"
+          echo "🎯 Click Sequence Completed:"
+          echo "  1. Initial click: (507, 363)"
+          echo "  2. After search for 'Fast User Switching':"
+          echo "     • Click at (256, 242)"
+          echo "     • Click at (827, 202)"
+          echo "     • Click at (791, 221)"
+          echo "  3. Final click: (785, 7)"
           echo ""
           echo "📁 Artifacts:"
           echo "  • Screenshots uploaded as 'macos-user-management-screenshots'"
