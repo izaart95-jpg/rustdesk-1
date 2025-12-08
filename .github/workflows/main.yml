@@ -1,335 +1,459 @@
-name: macOS Settings Sharing Screenshots
+name: RealVNC Connect Install & Screenshots
 
 on:
   workflow_dispatch:
-    inputs:
-      search_term:
-        description: 'Term to search in Settings'
-        default: 'Sharing'
-        required: true
-      screenshot_count:
-        description: 'Number of screenshots to take'
-        type: number
-        default: 3
-        required: true
-      delay_seconds:
-        description: 'Delay between screenshots (seconds)'
-        type: number
-        default: 1
-        required: true
 
 jobs:
-  settings-sharing-screenshots:
-    runs-on: macos-latest
-    timeout-minutes: 15
-    
+  realvnc-screenshots:
+    runs-on: macos-15
+    timeout-minutes: 30
+
     steps:
       - name: Check macOS Version
         run: |
-          echo "=== Checking macOS Version ==="
+          echo "=== macOS Version ==="
           sw_vers
-          echo "Running on: $(sw_vers -productVersion)"
-          echo "System: $(sw_vers -productName)"
-          
-      - name: Setup Environment
+          system_profiler SPSoftwareDataType | grep "System Version"
+
+      - name: Create Screenshot Directory
         run: |
-          echo "=== Setting Up Environment ==="
-          
-          # Create screenshots directory
-          SCREENSHOT_DIR="$(pwd)/settings_screenshots"
+          echo "=== Creating Screenshot Directory ==="
+          SCREENSHOT_DIR="$(pwd)/screenshots"
           mkdir -p "$SCREENSHOT_DIR"
-          
-          # Store in environment
           echo "SCREENSHOT_DIR=$SCREENSHOT_DIR" >> $GITHUB_ENV
-          echo "SEARCH_TERM=${{ github.event.inputs.search_term }}" >> $GITHUB_ENV
-          echo "SCREENSHOT_COUNT=${{ github.event.inputs.screenshot_count }}" >> $GITHUB_ENV
-          echo "DELAY_SECONDS=${{ github.event.inputs.delay_seconds }}" >> $GITHUB_ENV
-          
-          echo "📁 Screenshot directory: $SCREENSHOT_DIR"
-          echo "🔍 Search term: $SEARCH_TERM"
-          echo "📸 Screenshot count: $SCREENSHOT_COUNT"
-          echo "⏱️ Delay between shots: $DELAY_SECONDS seconds"
-          
-      - name: Get Screen Resolution
+          ls -la "$SCREENSHOT_DIR"
+
+      - name: Take Initial Screenshot
         run: |
-          echo "=== Getting Screen Resolution ==="
+          echo "=== Taking Initial Screenshot (Clean Desktop) ==="
+          timestamp=$(date +%Y%m%d_%H%M%S)
+          initial_file="$SCREENSHOT_DIR/01_initial_desktop_$timestamp.png"
+          screencapture -x "$initial_file"
           
-          # Get exact display resolution
-          if [ -z "$DISPLAY" ]; then
-            export DISPLAY=":99"
+          if [ -f "$initial_file" ]; then
+            filesize=$(ls -lh "$initial_file" | awk '{print $5}')
+            echo "✅ Initial screenshot: $initial_file ($filesize)"
+          else
+            echo "⚠️ Failed to take initial screenshot"
           fi
-          
-          # Multiple methods to get resolution
-          RESOLUTION=$(osascript -e 'tell application "Finder" to get bounds of window of desktop' 2>/dev/null | tr -d ',' | awk '{print $3 "x" $4}')
-          
-          if [ -z "$RESOLUTION" ] || [ "$RESOLUTION" = "0x0" ] || [ "$RESOLUTION" = "x" ]; then
-            # Alternative method
-            RESOLUTION=$(system_profiler SPDisplaysDataType 2>/dev/null | grep -A1 "Resolution:" | tail -1 | tr -d ' ' | sed 's/[^0-9x]//g')
-          fi
-          
-          # Fallback to default
-          if [ -z "$RESOLUTION" ] || [ "$RESOLUTION" = "0x0" ] || [ "$RESOLUTION" = "x" ]; then
-            RESOLUTION="1920x1080"
-            echo "⚠️ Using default resolution: $RESOLUTION"
-          fi
-          
-          # Clean and validate
-          RESOLUTION=$(echo "$RESOLUTION" | tr -d ',' | tr -d ' ' | sed 's/[^0-9x]//g')
-          
-          WIDTH=$(echo "$RESOLUTION" | cut -d'x' -f1)
-          HEIGHT=$(echo "$RESOLUTION" | cut -d'x' -f2)
-          
-          if ! [[ "$WIDTH" =~ ^[0-9]+$ ]] || ! [[ "$HEIGHT" =~ ^[0-9]+$ ]]; then
-            WIDTH="1920"
-            HEIGHT="1080"
-            RESOLUTION="${WIDTH}x${HEIGHT}"
-          fi
-          
-          echo "✅ Detected resolution: ${WIDTH}x${HEIGHT}"
-          echo "RESOLUTION=$RESOLUTION" >> $GITHUB_ENV
-          echo "SCREEN_WIDTH=$WIDTH" >> $GITHUB_ENV
-          echo "SCREEN_HEIGHT=$HEIGHT" >> $GITHUB_ENV
-          
-      - name: Open System Settings
+
+      - name: Download RealVNC Connect Installer
         run: |
-          echo "=== Opening System Settings ==="
+          echo "=== Downloading RealVNC Connect Installer ==="
           
-          # Kill System Settings if already running
-          pkill -f "System Settings" 2>/dev/null || true
-          sleep 2
+          # Download the installer
+          DOWNLOAD_URL="https://downloads.realvnc.com/download/file/realvnc-connect/RealVNC-Connect-Installer-3.2.0-MacOSX-universal.zip?lai_vid=AX4E8ExGpskbQ&lai_sr=0-4&lai_sl=l"
+          ZIP_FILE="RealVNC-Connect-Installer-3.2.0-MacOSX-universal.zip"
           
-          echo "Opening System Settings app..."
+          echo "Downloading from: $DOWNLOAD_URL"
+          curl -L -o "$ZIP_FILE" "$DOWNLOAD_URL"
           
-          # Open System Settings using different methods
-          open -a "System Settings" 2>/dev/null || \
-          open -a "System Preferences" 2>/dev/null || \
-          open "x-apple.systempreferences:" 2>/dev/null || \
-          osascript -e 'tell application "System Settings" to activate' 2>/dev/null
-          
-          echo "Waiting for System Settings to launch..."
-          
-          # Wait for app to open
-          for i in {1..30}; do
-            if pgrep -f "System Settings" > /dev/null || pgrep -f "System Preferences" > /dev/null; then
-              echo "✅ System Settings opened (attempt $i)"
-              break
-            fi
-            sleep 1
-          done
-          
-          # Additional wait for UI to load
-          sleep 5
-          
-          # Bring to front
-          osascript <<'EOF' 2>/dev/null || true
-          tell application "System Settings"
-            activate
-            delay 1
-          end tell
-          EOF
-          
-          echo "✅ System Settings should be visible"
-          
-      - name: Search for Sharing
+          # Check if download was successful
+          if [ -f "$ZIP_FILE" ]; then
+            filesize=$(ls -lh "$ZIP_FILE" | awk '{print $5}')
+            echo "✅ Download complete: $ZIP_FILE ($filesize)"
+            
+            # Extract the zip file
+            echo "Extracting ZIP file..."
+            unzip -q "$ZIP_FILE" -d extracted/
+            
+            # List contents
+            echo "Contents of extracted folder:"
+            find extracted/ -type f -name "*.pkg" -o -name "*.app" -o -name "*.dmg" | head -10
+            
+            # Save installer info for later steps
+            echo "ZIP_FILE=$ZIP_FILE" >> $GITHUB_ENV
+          else
+            echo "❌ Failed to download installer"
+            exit 1
+          fi
+
+      - name: Take Screenshot After Download
         run: |
-          echo "=== Searching for '$SEARCH_TERM' ==="
+          echo "=== Screenshot After Download ==="
+          timestamp=$(date +%Y%m%d_%H%M%S)
+          download_file="$SCREENSHOT_DIR/02_after_download_$timestamp.png"
+          screencapture -x "$download_file"
+          echo "✅ Screenshot after download saved"
+
+      - name: Install Prerequisites
+        run: |
+          echo "=== Installing Prerequisites ==="
           
-          # Install cliclick if needed
+          # Install Homebrew if not present
+          if ! command -v brew &> /dev/null; then
+            echo "Installing Homebrew..."
+            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+            echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zshrc
+            eval "$(/opt/homebrew/bin/brew shellenv)"
+          fi
+          
+          # Install cliclick for precise mouse control
           if ! command -v cliclick &> /dev/null; then
-            echo "Installing cliclick for precise clicking..."
+            echo "Installing cliclick..."
             brew install cliclick
           fi
           
-          # Method 1: Use keyboard shortcut (Cmd+F) to open search
-          echo "Opening search field with keyboard shortcut..."
+          # Install wget for better downloading
+          brew install wget
+
+      - name: Find and List Installer
+        run: |
+          echo "=== Finding RealVNC Installer ==="
           
-          # Focus search field (usually Cmd+F in System Settings)
-          osascript <<'EOF' 2>/dev/null || echo "Keyboard shortcut attempt completed"
-          tell application "System Events"
-            tell process "System Settings"
-              activate
-              delay 1
-              keystroke "f" using {command down}
-              delay 1
-            end tell
-          end tell
-          EOF
+          # Search for installer files
+          echo "Searching for installer files..."
           
-          sleep 2
-          
-          # Type the search term
-          echo "Typing search term: $SEARCH_TERM"
-          osascript <<EOF 2>/dev/null || echo "Typing attempt completed"
-          tell application "System Events"
-            keystroke "$SEARCH_TERM"
-            delay 1
-          end tell
-          EOF
-          
-          # Wait for search results
-          sleep 3
-          
-          # Method 2: Alternative AppleScript approach
-          echo "Trying alternative AppleScript method..."
-          osascript <<'EOF' 2>/dev/null || echo "Alternative method completed"
-          tell application "System Settings"
-            activate
-            delay 2
-          end tell
-          
-          tell application "System Events"
-            tell process "System Settings"
-              -- Try to find and click search field
-              set searchField to text field 1 of group 1 of toolbar 1 of window 1
-              set focused of searchField to true
-              delay 0.5
-              set value of searchField to "$SEARCH_TERM"
-              delay 1
-              keystroke return
-            end tell
-          end tell
-          EOF
-          
-          # Additional wait for search to complete
-          sleep 3
-          
-          # Take a screenshot to verify search worked
-          verify_file="$SCREENSHOT_DIR/search_verification_$(date +%H%M%S).png"
-          screencapture -x "$verify_file"
-          
-          if [ -f "$verify_file" ]; then
-            echo "✅ Search verification screenshot saved"
+          # Look for PKG files first
+          PKG_FILES=$(find . -name "*.pkg" -type f | head -5)
+          if [ -n "$PKG_FILES" ]; then
+            echo "Found PKG files:"
+            echo "$PKG_FILES"
+            INSTALLER_FILE=$(echo "$PKG_FILES" | head -1)
           else
-            echo "⚠️ Could not save verification screenshot"
+            # Look for DMG files
+            DMG_FILES=$(find . -name "*.dmg" -type f | head -5)
+            if [ -n "$DMG_FILES" ]; then
+              echo "Found DMG files:"
+              echo "$DMG_FILES"
+              INSTALLER_FILE=$(echo "$DMG_FILES" | head -1)
+            else
+              # Look for app files
+              APP_FILES=$(find . -name "*.app" -type d | head -5)
+              if [ -n "$APP_FILES" ]; then
+                echo "Found APP files:"
+                echo "$APP_FILES"
+                INSTALLER_FILE=$(echo "$APP_FILES" | head -1)
+              fi
+            fi
           fi
           
-          echo "✅ Search completed for '$SEARCH_TERM'"
-          
-      - name: Take Multiple Screenshots
+          if [ -n "$INSTALLER_FILE" ]; then
+            echo "✅ Primary installer found: $INSTALLER_FILE"
+            echo "INSTALLER_PATH=$INSTALLER_FILE" >> $GITHUB_ENV
+          else
+            echo "⚠️ No installer found, checking extracted contents..."
+            find extracted/ -type f | head -20
+          fi
+
+      - name: Take Screenshot Before Installation
         run: |
-          echo "=== Taking $SCREENSHOT_COUNT Screenshots ==="
-          echo "Delay between shots: $DELAY_SECONDS seconds"
-          echo ""
+          echo "=== Screenshot Before Installation ==="
+          timestamp=$(date +%Y%m%d_%H%M%S)
+          before_install_file="$SCREENSHOT_DIR/03_before_install_$timestamp.png"
+          screencapture -x "$before_install_file"
+          echo "✅ Screenshot before installation saved"
+
+      - name: Install RealVNC Connect
+        run: |
+          echo "=== Installing RealVNC Connect ==="
           
-          # Ensure System Settings is in front
-          osascript <<'EOF' 2>/dev/null || true
-          tell application "System Settings"
-            activate
-            delay 0.5
-          end tell
-          EOF
-          
-          sleep 2
-          
-          # Take specified number of screenshots
-          for ((i=1; i<=SCREENSHOT_COUNT; i++)); do
-            echo "📸 Screenshot $i/$SCREENSHOT_COUNT..."
+          # Method 1: If it's a PKG file
+          if [[ "$INSTALLER_PATH" == *.pkg ]]; then
+            echo "Installing PKG file: $INSTALLER_PATH"
             
-            timestamp=$(date +%Y%m%d_%H%M%S_%3N)
-            filepath="$SCREENSHOT_DIR/sharing_settings_${i}_${timestamp}.png"
+            # Try to install with installer command
+            sudo installer -pkg "$INSTALLER_PATH" -target / 2>&1 || true
             
-            # Take the screenshot
-            screencapture -x -t png "$filepath"
+            # Alternative: Open the installer for GUI installation
+            echo "Opening installer GUI..."
+            open "$INSTALLER_PATH"
             
-            if [ -f "$filepath" ]; then
-              filesize=$(ls -lh "$filepath" | awk '{print $5}')
-              dimensions=$(file "$filepath" 2>/dev/null | grep -o "[0-9]* x [0-9]*" || echo "Unknown")
-              echo "✅ Saved: $(basename "$filepath") ($filesize, $dimensions)"
+          # Method 2: If it's a DMG file
+          elif [[ "$INSTALLER_PATH" == *.dmg ]]; then
+            echo "Mounting DMG file: $INSTALLER_PATH"
+            
+            # Mount the DMG
+            hdiutil attach "$INSTALLER_PATH" -nobrowse
+            
+            # Find app in mounted volume
+            VOLUME_PATH=$(hdiutil info | grep -A 10 "$(basename "$INSTALLER_PATH")" | grep "/Volumes" | head -1 | awk '{print $1}')
+            
+            if [ -n "$VOLUME_PATH" ]; then
+              echo "Mounted at: $VOLUME_PATH"
               
-              # Optional: Add text overlay with screenshot info
-              echo "Screenshot $i - System Settings: $SEARCH_TERM" > "$SCREENSHOT_DIR/screenshot_${i}_info.txt"
-              echo "Time: $(date)" >> "$SCREENSHOT_DIR/screenshot_${i}_info.txt"
-              echo "Resolution: $RESOLUTION" >> "$SCREENSHOT_DIR/screenshot_${i}_info.txt"
+              # Look for app or pkg in mounted volume
+              APP_IN_DMG=$(find "$VOLUME_PATH" -name "*.app" -type d | head -1)
+              PKG_IN_DMG=$(find "$VOLUME_PATH" -name "*.pkg" -type f | head -1)
+              
+              if [ -n "$APP_IN_DMG" ]; then
+                echo "Found app in DMG: $APP_IN_DMG"
+                # Copy app to Applications
+                sudo cp -R "$APP_IN_DMG" /Applications/
+                echo "Copied to Applications"
+              elif [ -n "$PKG_IN_DMG" ]; then
+                echo "Found pkg in DMG: $PKG_IN_DMG"
+                sudo installer -pkg "$PKG_IN_DMG" -target / 2>&1 || true
+              fi
+              
+              # Unmount the DMG
+              hdiutil detach "$VOLUME_PATH"
+            fi
+            
+          # Method 3: If it's already an app
+          elif [[ "$INSTALLER_PATH" == *.app ]]; then
+            echo "Copying app to Applications: $INSTALLER_PATH"
+            sudo cp -R "$INSTALLER_PATH" /Applications/
+          fi
+          
+          echo "Installation attempt completed"
+          
+          # Wait for installer to start
+          echo "Waiting 10 seconds for installer to start..."
+          sleep 10
+
+      - name: Take Screenshot During Installation
+        run: |
+          echo "=== Screenshot During Installation ==="
+          timestamp=$(date +%Y%m%d_%H%M%S)
+          during_install_file="$SCREENSHOT_DIR/04_during_install_$timestamp.png"
+          screencapture -x "$during_install_file"
+          echo "✅ Screenshot during installation saved"
+
+      - name: Wait for Installation Completion
+        run: |
+          echo "=== Waiting for Installation Completion ==="
+          
+          # Wait for installation to complete
+          echo "Waiting 30 seconds for installation..."
+          
+          # Check if RealVNC processes are running
+          for i in {1..30}; do
+            if pgrep -f "RealVNC" || pgrep -f "VNC" || pgrep -f "vnc"; then
+              echo "✅ RealVNC process detected (attempt $i)"
+              break
+            fi
+            echo "Waiting... ($i/30)"
+            sleep 1
+          done
+          
+          # Additional wait for any GUI elements
+          sleep 10
+
+      - name: Launch RealVNC Connect
+        run: |
+          echo "=== Launching RealVNC Connect ==="
+          
+          # Try to find and launch RealVNC Connect
+          REALVNC_APP_PATHS=(
+            "/Applications/RealVNC Connect.app"
+            "/Applications/RealVNC/RealVNC Connect.app"
+            "/Applications/VNC Connect.app"
+            "$(find /Applications -name "*VNC*" -type d | head -1)"
+            "$(find ~/Applications -name "*VNC*" -type d 2>/dev/null | head -1)"
+          )
+          
+          for app_path in "${REALVNC_APP_PATHS[@]}"; do
+            if [ -d "$app_path" ]; then
+              echo "Found RealVNC at: $app_path"
+              echo "Launching..."
+              open "$app_path"
+              echo "✅ Launched: $app_path"
+              echo "REALVNC_APP_PATH=$app_path" >> $GITHUB_ENV
+              break
+            fi
+          done
+          
+          if [ -z "$REALVNC_APP_PATH" ]; then
+            echo "⚠️ Could not find RealVNC app, trying to launch from spotlight..."
+            open -a "RealVNC Connect" 2>/dev/null || true
+            open -a "VNC Connect" 2>/dev/null || true
+          fi
+          
+          # Wait for app to launch
+          echo "Waiting 15 seconds for app to fully launch..."
+          sleep 15
+
+      - name: Take Screenshots of Running Application
+        run: |
+          echo "=== Taking Screenshots of Running Application ==="
+          
+          # Get screen resolution
+          RESOLUTION=$(system_profiler SPDisplaysDataType | grep Resolution | head -1 | awk -F': ' '{print $2}')
+          echo "Screen Resolution: $RESOLUTION"
+          
+          # Take multiple screenshots with different delays
+          for i in {1..5}; do
+            echo ""
+            echo "📸 Taking screenshot $i/5..."
+            
+            # Calculate delay (longer for first screenshots)
+            if [ $i -eq 1 ]; then
+              delay=5
+            else
+              delay=3
+            fi
+            
+            echo "Waiting $delay seconds..."
+            sleep $delay
+            
+            timestamp=$(date +%Y%m%d_%H%M%S)
+            screenshot_file="$SCREENSHOT_DIR/05_running_${i}_$timestamp.png"
+            
+            screencapture -x "$screenshot_file"
+            
+            if [ -f "$screenshot_file" ]; then
+              filesize=$(ls -lh "$screenshot_file" | awk '{print $5}')
+              echo "✅ Saved: $(basename $screenshot_file) ($filesize)"
             else
               echo "⚠️ Failed to take screenshot $i"
             fi
+          done
+
+      - name: Interact with RealVNC UI
+        run: |
+          echo "=== Interacting with RealVNC UI ==="
+          
+          # Get screen dimensions
+          SCREEN_INFO=$(osascript -e 'tell application "Finder" to get bounds of window of desktop')
+          SCREEN_WIDTH=$(echo "$SCREEN_INFO" | awk -F', ' '{print $3}')
+          SCREEN_HEIGHT=$(echo "$SCREEN_INFO" | awk -F', ' '{print $4}')
+          
+          echo "Screen dimensions: ${SCREEN_WIDTH}x${SCREEN_HEIGHT}"
+          
+          # Common UI interaction points (scaled)
+          echo "Calculating UI interaction points..."
+          
+          # Define relative positions (as percentages of screen)
+          declare -A CLICK_POINTS=(
+            ["center"]="50,50"
+            ["top_right"]="90,10"
+            ["middle_left"]="10,50"
+            ["bottom_center"]="50,85"
+          )
+          
+          # Install cliclick if not present
+          if ! command -v cliclick &> /dev/null; then
+            echo "Installing cliclick..."
+            brew install cliclick
+          fi
+          
+          # Perform clicks at calculated positions
+          echo ""
+          echo "=== Performing UI Interactions ==="
+          
+          for position in "${!CLICK_POINTS[@]}"; do
+            percentages=${CLICK_POINTS[$position]}
+            x_percent=$(echo "$percentages" | cut -d',' -f1)
+            y_percent=$(echo "$percentages" | cut -d',' -f2)
             
-            # Delay between shots (except after last one)
-            if [ $i -lt $SCREENSHOT_COUNT ]; then
-              echo "⏱️ Waiting $DELAY_SECONDS seconds..."
-              sleep $DELAY_SECONDS
+            # Calculate actual coordinates
+            x_pos=$((SCREEN_WIDTH * x_percent / 100))
+            y_pos=$((SCREEN_HEIGHT * y_percent / 100))
+            
+            echo "Clicking $position at ($x_pos, $y_pos)..."
+            cliclick c:$x_pos,$y_pos
+            
+            # Take screenshot after click
+            sleep 2
+            interaction_file="$SCREENSHOT_DIR/06_interaction_${position}_$(date +%H%M%S).png"
+            screencapture -x "$interaction_file"
+            
+            echo "✅ Clicked $position, screenshot saved"
+          done
+
+      - name: Take Final Screenshots
+        run: |
+          echo "=== Taking Final Screenshots ==="
+          
+          # Take 3 final screenshots with delays
+          for i in {1..3}; do
+            echo ""
+            echo "📸 Taking final screenshot $i/3..."
+            
+            sleep 2
+            
+            timestamp=$(date +%Y%m%d_%H%M%S)
+            final_file="$SCREENSHOT_DIR/07_final_${i}_$timestamp.png"
+            
+            screencapture -x "$final_file"
+            
+            if [ -f "$final_file" ]; then
+              filesize=$(ls -lh "$final_file" | awk '{print $5}')
+              echo "✅ Saved: $(basename $final_file) ($filesize)"
+            else
+              echo "⚠️ Failed to take final screenshot $i"
             fi
           done
           
+          # List all screenshots
           echo ""
-          echo "✅ All $SCREENSHOT_COUNT screenshots completed"
-          
-    
-          
-      - name: Create Screenshot Report
+          echo "=== All Screenshots Captured ==="
+          ls -la "$SCREENSHOT_DIR/" | grep ".png"
+
+      - name: Capture System Information
         run: |
-          echo "=== Creating Screenshot Report ==="
+          echo "=== Capturing System Information ==="
           
-          REPORT_FILE="$SCREENSHOT_DIR/screenshot_report.md"
+          INFO_FILE="$SCREENSHOT_DIR/system_info.txt"
           
-          cat > "$REPORT_FILE" << EOF
-          # System Settings Screenshot Report
+          echo "RealVNC Connect Installation Report" > "$INFO_FILE"
+          echo "===================================" >> "$INFO_FILE"
+          echo "Generated: $(date)" >> "$INFO_FILE"
+          echo "" >> "$INFO_FILE"
           
-          ## Test Information
-          - **Date**: $(date)
-          - **macOS Version**: $(sw_vers -productVersion)
-          - **Search Term**: $SEARCH_TERM
-          - **Screenshots Taken**: $SCREENSHOT_COUNT
-          - **Delay Between Shots**: $DELAY_SECONDS seconds
-          - **Screen Resolution**: $RESOLUTION
+          # macOS Version
+          echo "macOS Version:" >> "$INFO_FILE"
+          sw_vers >> "$INFO_FILE"
+          echo "" >> "$INFO_FILE"
           
-          ## Screenshots Taken
-          EOF
+          # Screen Resolution
+          echo "Display Information:" >> "$INFO_FILE"
+          system_profiler SPDisplaysDataType | grep -A 5 "Displays:" >> "$INFO_FILE"
+          echo "" >> "$INFO_FILE"
           
-          # List all PNG files
-          echo "" >> "$REPORT_FILE"
-          echo "### Screenshot Files" >> "$REPORT_FILE"
-          echo "" >> "$REPORT_FILE"
+          # Installed Applications
+          echo "Installed VNC-related Applications:" >> "$INFO_FILE"
+          find /Applications -name "*VNC*" -type d 2>/dev/null >> "$INFO_FILE"
+          echo "" >> "$INFO_FILE"
           
-          find "$SCREENSHOT_DIR" -name "*.png" -type f | sort | while read -r file; do
-            filename=$(basename "$file")
-            filesize=$(ls -lh "$file" | awk '{print $5}')
-            echo "- **$filename** ($filesize)" >> "$REPORT_FILE"
-          done
+          # Running Processes
+          echo "Running VNC-related Processes:" >> "$INFO_FILE"
+          ps aux | grep -i vnc | grep -v grep >> "$INFO_FILE"
+          echo "" >> "$INFO_FILE"
           
-          ## System Information
-          echo "" >> "$REPORT_FILE"
-          echo "### System Information" >> "$REPORT_FILE"
-          echo "" >> "$REPORT_FILE"
-          echo '```bash' >> "$REPORT_FILE"
-          sw_vers >> "$REPORT_FILE"
-          echo "" >> "$REPORT_FILE"
+          # Network Connections
+          echo "Network Connections (VNC related):" >> "$INFO_FILE"
+          lsof -i | grep -i vnc 2>/dev/null || echo "No VNC connections found" >> "$INFO_FILE"
+          echo "" >> "$INFO_FILE"
           
-          # Display settings info
-          osascript -e 'tell application "System Events" to tell process "System Settings" to get name of windows' 2>/dev/null >> "$REPORT_FILE" || true
-          echo '```' >> "$REPORT_FILE"
+          # Screenshot Count
+          SCREENSHOT_COUNT=$(find "$SCREENSHOT_DIR" -name "*.png" | wc -l | tr -d ' ')
+          echo "Total Screenshots Captured: $SCREENSHOT_COUNT" >> "$INFO_FILE"
+          echo "" >> "$INFO_FILE"
           
-          echo "✅ Report created: $(basename "$REPORT_FILE")"
-          
+          echo "System information saved to: $INFO_FILE"
+          cat "$INFO_FILE"
+
       - name: Upload Screenshots as Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: system-settings-sharing-screenshots
-          path: ${{ env.SCREENSHOT_DIR }}
+          name: realvnc-connect-screenshots
+          path: |
+            ${{ env.SCREENSHOT_DIR }}
+            RealVNC-Connect-Installer-3.2.0-MacOSX-universal.zip
           retention-days: 7
-          compression-level: 9
-          
-      - name: Cleanup and Close Settings
+
+      - name: Cleanup
         if: always()
         run: |
           echo "=== Cleaning Up ==="
           
-          # Close System Settings
-          echo "Closing System Settings..."
-          osascript <<'EOF' 2>/dev/null || true
-          tell application "System Settings"
-            quit
-          end tell
-          EOF
-          
-          # Force kill if needed
-          pkill -f "System Settings" 2>/dev/null || true
-          pkill -f "System Preferences" 2>/dev/null || true
-          
+          # Kill RealVNC processes
+          echo "Stopping RealVNC processes..."
+          pkill -f "RealVNC" 2>/dev/null || true
+          pkill -f "VNC" 2>/dev/null || true
           sleep 2
           
-          # Final count
-          screenshot_count=$(find "$SCREENSHOT_DIR" -name "*.png" -type f 2>/dev/null | wc -l | tr -d ' ')
-          echo "✅ Total screenshots captured: $screenshot_count"
-          echo "📁 Artifact directory: $SCREENSHOT_DIR"
-          echo "🏁 Workflow completed successfully!"
+          # Clean up downloaded files
+          echo "Cleaning up downloaded files..."
+          rm -f RealVNC-Connect-Installer-3.2.0-MacOSX-universal.zip
+          rm -rf extracted/
+          
+          # Final screenshot
+          final_cleanup_file="$SCREENSHOT_DIR/08_final_cleanup_$(date +%H%M%S).png"
+          screencapture -x "$final_cleanup_file" 2>/dev/null && echo "✅ Final cleanup screenshot taken"
+          
+          echo "=== Workflow Complete ==="
+          echo "Total runtime: ~30 minutes"
+          echo "Total screenshots: $(find "$SCREENSHOT_DIR" -name "*.png" 2>/dev/null | wc -l)"
