@@ -1,10 +1,10 @@
-name: Create Admin User and Test System Settings
+name: macOS User Creation and System Settings Test
 
 on:
   workflow_dispatch:
 
 jobs:
-  create-user-test:
+  user-creation-test:
     runs-on: macos-latest
     timeout-minutes: 15
 
@@ -21,7 +21,7 @@ jobs:
           mkdir -p screenshots
           echo "SCREENSHOT_DIR=$(pwd)/screenshots" >> $GITHUB_ENV
 
-      - name: Initial Screenshot
+      - name: Initial Screenshot (Clean Desktop)
         run: |
           echo "=== Taking Initial Screenshot ==="
           timestamp=$(date +%Y%m%d_%H%M%S)
@@ -29,76 +29,83 @@ jobs:
           screencapture -x "$screenshot_file"
           echo "✅ Initial screenshot saved: $screenshot_file"
 
-      - name: Create User Hamiya
+      - name: Enable Multiple Sessions
         run: |
-          echo "=== Creating User Hamiya ==="
+          echo "=== Enabling Multiple Sessions ==="
+          
+          # Enable multiple sessions
+          sudo defaults write /Library/Preferences/com.apple.loginwindow MultipleSessionEnabled -bool true
+          echo "✅ MultipleSessionEnabled set to true"
+          
+          # Set multiple session name
+          sudo defaults write /Library/Preferences/com.apple.loginwindow MultipleSessionName -string "FullName"
+          echo "✅ MultipleSessionName set to 'FullName'"
+          
+          # Verify the settings
+          echo "Verifying settings..."
+          sudo defaults read /Library/Preferences/com.apple.loginwindow MultipleSessionEnabled
+          sudo defaults read /Library/Preferences/com.apple.loginwindow MultipleSessionName
+
+      - name: Create Admin User
+        run: |
+          echo "=== Creating Admin User ==="
           
           # Check if user already exists
           if id "Hamiya" &>/dev/null; then
-            echo "⚠️ User Hamiya already exists, deleting..."
-            sudo sysadminctl -deleteUser Hamiya -keepHome 2>/dev/null || true
-            sudo dscl . -delete /Users/Hamiya 2>/dev/null || true
+            echo "⚠️ User 'Hamiya' already exists, deleting..."
+            sudo sysadminctl -deleteUser Hamiya
             sleep 2
           fi
           
-          # Create the user
-          echo "Creating user Hamiya with full name 'Hamiyas'..."
-          sudo sysadminctl -addUser Hamiya -fullName "Hamiyas" -password "Hamza@157" -admin 2>&1 || true
+          # Create new user with password
+          echo "Creating user 'Hamiya'..."
+          sudo sysadminctl -addUser Hamiya -fullName "Hamiyas" -password "Hamza@157"
           
-          # Verify user creation
-          echo "Verifying user creation..."
-          if id "Hamiya" &>/dev/null; then
-            echo "✅ User Hamiya created successfully"
+          if [ $? -eq 0 ]; then
+            echo "✅ User 'Hamiya' created successfully"
           else
-            echo "❌ Failed to create user Hamiya"
-            echo "Trying alternative method..."
-            sudo dscl . -create /Users/Hamiya
-            sudo dscl . -create /Users/Hamiya UserShell /bin/bash
-            sudo dscl . -create /Users/Hamiya RealName "Hamiyas"
-            sudo dscl . -create /Users/Hamiya UniqueID "599"
-            sudo dscl . -create /Users/Hamiya PrimaryGroupID 20
-            sudo dscl . -create /Users/Hamiya NFSHomeDirectory /Users/Hamiya
-            sudo dscl . -passwd /Users/Hamiya "Hamza@157"
+            echo "❌ Failed to create user"
+            exit 1
           fi
-
-      - name: Add User to Admin Group
-        run: |
-          echo "=== Adding Hamiya to Admin Group ==="
           
-          sudo defaults write /Library/Preferences/com.apple.loginwindow MultipleSessionEnabled -bool true
-
           # Add user to admin group
-          echo "Adding Hamiya to admin group..."
+          echo "Adding 'Hamiya' to admin group..."
           sudo dseditgroup -o edit -a Hamiya -t user admin
+          
+          if [ $? -eq 0 ]; then
+            echo "✅ User added to admin group"
+          else
+            echo "❌ Failed to add user to admin group"
+            exit 1
+          fi
           
           # Verify admin group membership
           echo "Verifying admin group membership..."
-          ADMIN_MEMBERS=$(sudo dscl . read /Groups/admin GroupMembership 2>/dev/null || echo "")
-          
-          if [[ "$ADMIN_MEMBERS" == *"Hamiya"* ]]; then
-            echo "✅ Hamiya successfully added to admin group"
-            echo "Admin group members:"
-            echo "$ADMIN_MEMBERS"
-          else
-            echo "❌ Failed to add Hamiya to admin group"
-            echo "Trying alternative method..."
-            sudo dscl . -append /Groups/admin GroupMembership Hamiya
-          fi
-          
-          # Final verification
-          echo "Final verification:"
-          sudo dscl . read /Groups/admin GroupMembership || true
-          echo ""
-          echo "User info for Hamiya:"
-          id Hamiya || true
+          sudo dscl . read /Groups/admin GroupMembership
 
-      - name: Screenshot After User Creation
+      - name: Verify User Creation
         run: |
-          echo "=== Screenshot After User Creation ==="
+          echo "=== Verifying User Creation ==="
+          
+          # Take screenshot after user creation
           timestamp=$(date +%Y%m%d_%H%M%S)
           screenshot_file="$SCREENSHOT_DIR/02_after_user_creation_$timestamp.png"
           screencapture -x "$screenshot_file"
           echo "✅ User creation screenshot saved"
+          
+          # List all users
+          echo "Current users on system:"
+          dscl . list /Users | grep -v '^_'
+          
+          # Show user details
+          echo ""
+          echo "User 'Hamiya' details:"
+          id Hamiya
+          
+          # Show admin group members
+          echo ""
+          echo "Admin group members:"
+          dscl . read /Groups/admin GroupMembership
 
       - name: Open System Settings
         run: |
@@ -112,9 +119,9 @@ jobs:
           echo "Opening System Settings..."
           open -a "System Settings"
           
-          # Wait for System Settings to open
+          # Wait for System Settings to launch
           echo "Waiting for System Settings to launch..."
-          for i in {1..10}; do
+          for i in {1..15}; do
             if pgrep -f "System Settings" > /dev/null; then
               echo "✅ System Settings process found (attempt $i)"
               break
@@ -123,74 +130,95 @@ jobs:
           done
           
           # Wait for UI to load
+          echo "Waiting for UI to load..."
           sleep 3
+          
+          # Bring System Settings to front
+          osascript -e 'tell application "System Settings" to activate' 2>/dev/null || true
+          sleep 2
+          
+          # Take screenshot after launch
+          screenshot_file="$SCREENSHOT_DIR/03_system_settings_open_$(date +%H%M%S).png"
+          screencapture -x "$screenshot_file"
+          echo "✅ System Settings launch screenshot saved"
 
-      - name: Take System Settings Screenshots
+      - name: Click at Coordinates (507, 363)
         run: |
-          echo "=== Taking System Settings Screenshots ==="
+          echo "=== Clicking at Coordinates (507, 363) ==="
           
           # Install cliclick for precise clicking
           if ! command -v cliclick &> /dev/null; then
-            echo "Installing cliclick for UI testing..."
+            echo "Installing cliclick..."
             brew install cliclick
           fi
           
-          # Get screen dimensions
-          SCREEN_INFO=$(system_profiler SPDisplaysDataType 2>/dev/null | grep -A1 "Resolution:" | tail -1 | tr -d ' ' | sed 's/[^0-9x]//g')
-          if [ -z "$SCREEN_INFO" ] || [ "$SCREEN_INFO" = "0x0" ]; then
-            SCREEN_INFO="1440x900"
-            echo "⚠️ Using default screen resolution: $SCREEN_INFO"
-          fi
-          
-          WIDTH=$(echo "$SCREEN_INFO" | cut -d'x' -f1)
-          HEIGHT=$(echo "$SCREEN_INFO" | cut -d'x' -f2)
-          
-          echo "Screen: ${WIDTH}x${HEIGHT}"
-          
-          # Screenshot 3 - System Settings main window
-          echo "Taking screenshot 3 (System Settings main)..."
-          screenshot_file="$SCREENSHOT_DIR/03_system_settings_main_$(date +%H%M%S).png"
+          # First screenshot before click
+          echo "Taking screenshot before click..."
+          screenshot_file="$SCREENSHOT_DIR/04_before_click_507_363_$(date +%H%M%S).png"
           screencapture -x "$screenshot_file"
-          sleep 1
           
-          # Click on Users & Groups area (typical position)
-          echo "Clicking on Users & Groups area..."
-          USERS_X=$((WIDTH / 3))
-          USERS_Y=$((HEIGHT / 2))
-          cliclick c:$USERS_X,$USERS_Y
+          # Perform click at coordinates (507, 363)
+          echo "Clicking at coordinates (507, 363)..."
+          cliclick c:507,363
+          
+          # Wait for click to register
+          echo "Waiting for click to register..."
           sleep 2
           
-          # Screenshot 4 - After clicking Users & Groups
-          echo "Taking screenshot 4 (after click)..."
-          screenshot_file="$SCREENSHOT_DIR/04_after_users_click_$(date +%H%M%S).png"
+          # Take screenshot after click
+          screenshot_file="$SCREENSHOT_DIR/05_after_click_507_363_$(date +%H%M%S).png"
           screencapture -x "$screenshot_file"
+          echo "✅ Screenshot after click saved"
+          
+          # Additional wait and another screenshot
           sleep 1
-          
-          # Click on search bar (top-right)
-          echo "Clicking on search bar..."
-          SEARCH_X=$((WIDTH - 200))
-          SEARCH_Y=150
-          cliclick c:$SEARCH_X,$SEARCH_Y
-          sleep 1
-          
-          # Type "users" in search
-          echo "Typing 'users' in search..."
-          osascript -e 'tell application "System Events" to keystroke "users"'
-          sleep 2
-          
-          # Screenshot 5 - After search
-          echo "Taking screenshot 5 (after search)..."
-          screenshot_file="$SCREENSHOT_DIR/05_after_search_$(date +%H%M%S).png"
+          screenshot_file="$SCREENSHOT_DIR/06_after_click_wait_$(date +%H%M%S).png"
           screencapture -x "$screenshot_file"
 
-      - name: Test User Settings Access
+      - name: Test User Accounts Section
         run: |
-          echo "=== Testing User Settings Access ==="
+          echo "=== Testing User Accounts Section ==="
           
-          # Take screenshot before quitting
-          echo "Taking screenshot 6 (before closing)..."
-          screenshot_file="$SCREENSHOT_DIR/06_before_close_$(date +%H%M%S).png"
+          # Take screenshot of current state
+          echo "Taking screenshot of current System Settings state..."
+          screenshot_file="$SCREENSHOT_DIR/07_current_state_$(date +%H%M%S).png"
           screencapture -x "$screenshot_file"
+          
+          # Try to open Users & Groups using AppleScript (if click didn't work)
+          echo "Attempting to access Users & Groups..."
+          /usr/bin/osascript <<'EOF' 2>&1 || echo "AppleScript completed"
+          tell application "System Events"
+            delay 1
+            tell process "System Settings"
+              -- Try to click on Users & Groups in sidebar
+              try
+                -- Search for Users & Groups button
+                click (first button of first scroll area of first window whose description contains "Users" or name contains "Users")
+                delay 2
+              on error
+                -- Try alternative method
+                keystroke "f" using {command down}
+                delay 1
+                keystroke "Users & Groups"
+                delay 1
+                keystroke return
+                delay 2
+              end try
+            end tell
+          end tell
+          EOF
+          
+          # Wait for changes
+          sleep 2
+          
+          # Take final screenshot
+          screenshot_file="$SCREENSHOT_DIR/08_final_state_$(date +%H%M%S).png"
+          screencapture -x "$screenshot_file"
+          echo "✅ Final screenshot saved"
+
+      - name: Cleanup
+        run: |
+          echo "=== Cleaning Up ==="
           
           # Close System Settings
           echo "Closing System Settings..."
@@ -200,12 +228,64 @@ jobs:
           # Force quit if needed
           pkill -f "System Settings" 2>/dev/null || true
           
-          # Take final screenshot
-          echo "Taking final screenshot 7 (after close)..."
-          screenshot_file="$SCREENSHOT_DIR/07_after_close_$(date +%H%M%S).png"
+          # Take final desktop screenshot
+          echo "Taking final desktop screenshot..."
+          screenshot_file="$SCREENSHOT_DIR/09_final_desktop_$(date +%H%M%S).png"
           screencapture -x "$screenshot_file"
+          
+          # Optional: Remove test user (commented out for inspection)
+          # echo "Removing test user..."
+          # sudo sysadminctl -deleteUser Hamiya 2>/dev/null || true
 
-     
+      - name: Capture Test Information
+        run: |
+          echo "=== Capturing Test Information ==="
+          
+          INFO_FILE="$SCREENSHOT_DIR/test_info.txt"
+          
+          echo "macOS User Creation Test Report" > "$INFO_FILE"
+          echo "==============================" >> "$INFO_FILE"
+          echo "Test Date: $(date)" >> "$INFO_FILE"
+          echo "macOS Version: $(sw_vers -productVersion)" >> "$INFO_FILE"
+          echo "" >> "$INFO_FILE"
+          
+          echo "Configuration Changes:" >> "$INFO_FILE"
+          echo "---------------------" >> "$INFO_FILE"
+          echo "MultipleSessionEnabled: $(sudo defaults read /Library/Preferences/com.apple.loginwindow MultipleSessionEnabled 2>/dev/null || echo 'Not set')" >> "$INFO_FILE"
+          echo "MultipleSessionName: $(sudo defaults read /Library/Preferences/com.apple.loginwindow MultipleSessionName 2>/dev/null || echo 'Not set')" >> "$INFO_FILE"
+          echo "" >> "$INFO_FILE"
+          
+          echo "User Information:" >> "$INFO_FILE"
+          echo "----------------" >> "$INFO_FILE"
+          echo "Test User: Hamiya" >> "$INFO_FILE"
+          echo "Full Name: Hamiyas" >> "$INFO_FILE"
+          echo "Is Admin: $(dseditgroup -o checkmember -m Hamiya admin 2>/dev/null | grep -q 'yes' && echo 'Yes' || echo 'No')" >> "$INFO_FILE"
+          echo "" >> "$INFO_FILE"
+          
+          echo "Admin Group Members:" >> "$INFO_FILE"
+          dscl . read /Groups/admin GroupMembership 2>/dev/null >> "$INFO_FILE" || echo "Could not read admin group" >> "$INFO_FILE"
+          echo "" >> "$INFO_FILE"
+          
+          echo "Click Test:" >> "$INFO_FILE"
+          echo "----------" >> "$INFO_FILE"
+          echo "Coordinates: (507, 363)" >> "$INFO_FILE"
+          echo "Application: System Settings" >> "$INFO_FILE"
+          echo "" >> "$INFO_FILE"
+          
+          echo "Screenshots Taken:" >> "$INFO_FILE"
+          find "$SCREENSHOT_DIR" -name "*.png" -exec basename {} \; | sort >> "$INFO_FILE"
+          echo "" >> "$INFO_FILE"
+          
+          echo "Test Summary:" >> "$INFO_FILE"
+          echo "-------------" >> "$INFO_FILE"
+          echo "- Enabled multiple sessions" >> "$INFO_FILE"
+          echo "- Created user 'Hamiya' with admin privileges" >> "$INFO_FILE"
+          echo "- Opened System Settings" >> "$INFO_FILE"
+          echo "- Clicked at coordinates (507, 363)" >> "$INFO_FILE"
+          echo "- Captured $(find "$SCREENSHOT_DIR" -name "*.png" | wc -l | tr -d ' ') screenshots" >> "$INFO_FILE"
+          
+          echo "✅ Test info saved"
+
       - name: Upload Screenshots
         uses: actions/upload-artifact@v4
         with:
@@ -218,37 +298,30 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: user-creation-summary
+          name: user-creation-test-summary
           path: |
-            ${{ env.SCREENSHOT_DIR }}/user_info.txt
+            ${{ env.SCREENSHOT_DIR }}/test_info.txt
           retention-days: 7
-
-      - name: Cleanup (Optional)
-        if: always()
-        run: |
-          echo "=== Cleaning Up ==="
-          echo "Note: User Hamiya remains on the system for verification"
-          echo "To remove manually, run: sudo sysadminctl -deleteUser Hamiya"
-          echo "Or: sudo dscl . -delete /Users/Hamiya"
 
       - name: Final Report
         run: |
-          echo "=== User Creation Test Complete ==="
+          echo "=== macOS User Creation Test Complete ==="
           echo ""
           echo "📊 Summary:"
           echo "  ✅ macOS Version: $(sw_vers -productVersion)"
-          echo "  ✅ User 'Hamiya' created with password 'Hamza@157'"
-          echo "  ✅ User added to admin group"
+          echo "  ✅ Multiple sessions enabled"
+          echo "  ✅ User 'Hamiya' created with admin privileges"
+          echo "  ✅ System Settings opened"
+          echo "  ✅ Click performed at coordinates (507, 363)"
           SCREENSHOT_COUNT=$(find "$SCREENSHOT_DIR" -name "*.png" 2>/dev/null | wc -l | tr -d ' ')
           echo "  ✅ $SCREENSHOT_COUNT screenshots taken"
-          echo "  ✅ System Settings opened and tested"
           echo ""
           echo "📁 Artifacts:"
           echo "  • Screenshots uploaded as 'user-creation-screenshots'"
-          echo "  • User info uploaded as 'user-creation-summary'"
+          echo "  • Test summary uploaded as 'user-creation-test-summary'"
           echo ""
-          echo "🔍 Verification:"
-          echo "  User exists: $(id Hamiya 2>/dev/null && echo 'Yes' || echo 'No')"
-          echo "  In admin group: $(sudo dscl . read /Groups/admin GroupMembership 2>/dev/null | grep -q Hamiya && echo 'Yes' || echo 'No')"
+          echo "⚙️ Configuration applied:"
+          echo "  • MultipleSessionEnabled: $(sudo defaults read /Library/Preferences/com.apple.loginwindow MultipleSessionEnabled 2>/dev/null || echo 'Not set')"
+          echo "  • User in admin group: $(dseditgroup -o checkmember -m Hamiya admin 2>/dev/null | grep -q 'yes' && echo 'Yes' || echo 'No')"
           echo ""
           echo "🎯 Test completed successfully!"
