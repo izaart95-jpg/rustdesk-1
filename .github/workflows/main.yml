@@ -1,501 +1,443 @@
-name: RealVNC Connect Installation and Screenshots
+name: VNC Viewer macOS Testing
 
 on:
   workflow_dispatch:
-    inputs:
-      vnc_version:
-        description: 'RealVNC version (default: 3.2.0)'
-        required: false
-        default: '3.2.0'
 
 jobs:
-  realvnc-installation:
+  vnc-viewer-test:
     runs-on: macos-15
     timeout-minutes: 30
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Setup Environment
+      - name: Check macOS Version
         run: |
-          echo "=== Setting Up Environment ==="
-          echo "macOS Version: $(sw_vers -productVersion)"
-          echo "GitHub Runner: ${{ runner.os }}"
-          
-          # Create directories
-          mkdir -p downloads screenshots logs
-          
-          # Set environment variables
-          VNC_VERSION="${{ inputs.vnc_version || '3.2.0' }}"
-          DOWNLOAD_URL="https://downloads.realvnc.com/download/file/realvnc-connect/RealVNC-Connect-Installer-${VNC_VERSION}-MacOSX-universal.zip"
-          DOWNLOAD_PATH="$(pwd)/downloads/RealVNC-Connect-${VNC_VERSION}.zip"
-          EXTRACT_PATH="$(pwd)/downloads/RealVNC-Connect"
-          SCREENSHOT_DIR="$(pwd)/screenshots"
-          LOG_DIR="$(pwd)/logs"
-          
-          echo "VNC_VERSION=$VNC_VERSION" >> $GITHUB_ENV
-          echo "DOWNLOAD_URL=$DOWNLOAD_URL" >> $GITHUB_ENV
-          echo "DOWNLOAD_PATH=$DOWNLOAD_PATH" >> $GITHUB_ENV
-          echo "EXTRACT_PATH=$EXTRACT_PATH" >> $GITHUB_ENV
-          echo "SCREENSHOT_DIR=$SCREENSHOT_DIR" >> $GITHUB_ENV
-          echo "LOG_DIR=$LOG_DIR" >> $GITHUB_ENV
-          echo "WORKING_DIR=$(pwd)" >> $GITHUB_ENV
+          echo "=== macOS Version ==="
+          sw_vers
+          system_profiler SPSoftwareDataType | grep "System Version"
 
-      - name: Download RealVNC Connect
+      - name: Download VNC Viewer
         run: |
-          echo "=== Downloading RealVNC Connect ==="
-          echo "Download URL: $DOWNLOAD_URL"
-          echo "Save Path: $DOWNLOAD_PATH"
+          echo "=== Downloading VNC Viewer ==="
           
-          # Download with retries and progress
-          for attempt in {1..3}; do
-            echo "Download attempt $attempt..."
-            if curl -L "$DOWNLOAD_URL" \
-                -H "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36" \
-                -o "$DOWNLOAD_PATH" \
-                --progress-bar \
-                --retry 3 \
-                --retry-delay 5; then
-              echo "✅ Download completed successfully"
-              break
-            else
-              echo "⚠️ Download attempt $attempt failed"
-              if [ $attempt -eq 3 ]; then
-                echo "❌ All download attempts failed"
-                exit 1
-              fi
-              sleep 10
-            fi
-          done
+          # Create directory for downloads
+          mkdir -p downloads
+          
+          # Download VNC Viewer DMG
+          VNC_URL="https://downloads.realvnc.com/download/file/viewer.files/VNC-Viewer-7.15.1-MacOSX-universal.dmg?lai_vid=AX4E8ExGpskbQ&lai_sr=0-4&lai_sl=l"
+          DMG_PATH="downloads/VNC-Viewer.dmg"
+          
+          echo "Downloading VNC Viewer from: ${VNC_URL}"
+          curl -L -o "$DMG_PATH" "$VNC_URL"
           
           # Verify download
-          if [ -f "$DOWNLOAD_PATH" ]; then
-            FILE_SIZE=$(ls -lh "$DOWNLOAD_PATH" | awk '{print $5}')
-            echo "Downloaded file size: $FILE_SIZE"
-            
-            # Check if file is a valid zip
-            if file "$DOWNLOAD_PATH" | grep -q "Zip archive data"; then
-              echo "✅ File is a valid ZIP archive"
+          if [ -f "$DMG_PATH" ]; then
+            file_size=$(ls -lh "$DMG_PATH" | awk '{print $5}')
+            echo "✅ Download successful: $file_size"
+            echo "DMG_PATH=$DMG_PATH" >> $GITHUB_ENV
+          else
+            echo "❌ Download failed!"
+            exit 1
+          fi
+
+      - name: Install VNC Viewer
+        run: |
+          echo "=== Installing VNC Viewer ==="
+          
+          # Mount DMG
+          echo "Mounting DMG..."
+          MOUNT_PATH="/Volumes/VNC Viewer"
+          hdiutil attach "$DMG_PATH" -nobrowse
+          
+          # Check what's in the DMG
+          echo "Contents of DMG:"
+          ls -la "/Volumes/VNC Viewer" || true
+          
+          # Install to Applications
+          echo "Installing to Applications..."
+          if [ -f "/Volumes/VNC Viewer/VNC Viewer.app" ]; then
+            cp -R "/Volumes/VNC Viewer/VNC Viewer.app" "/Applications/"
+            echo "✅ VNC Viewer installed to Applications"
+          elif [ -f "/Volumes/VNC Viewer/VNC-Viewer.app" ]; then
+            cp -R "/Volumes/VNC Viewer/VNC-Viewer.app" "/Applications/"
+            echo "✅ VNC Viewer installed to Applications"
+          else
+            # Try to find any .app file
+            APP_FILE=$(find "/Volumes/VNC Viewer" -name "*.app" -maxdepth 1 | head -1)
+            if [ -n "$APP_FILE" ]; then
+              cp -R "$APP_FILE" "/Applications/"
+              echo "✅ VNC Viewer installed from: $(basename "$APP_FILE")"
             else
-              echo "⚠️ File may not be a valid ZIP archive"
+              echo "❌ No .app file found in DMG!"
+              exit 1
             fi
-          else
-            echo "❌ Download file not found"
-            exit 1
+          fi
+          
+          # Unmount DMG
+          hdiutil detach "/Volumes/VNC Viewer" -force 2>/dev/null || true
+          
+          # Verify installation
+          if [ -d "/Applications/VNC Viewer.app" ]; then
+            echo "✅ Installation verified: /Applications/VNC Viewer.app"
+          elif [ -d "/Applications/VNC-Viewer.app" ]; then
+            echo "✅ Installation verified: /Applications/VNC-Viewer.app"
+            # Create alias for easier reference
+            ln -s "/Applications/VNC-Viewer.app" "/Applications/VNC Viewer.app" 2>/dev/null || true
           fi
 
-      - name: Extract RealVNC Installer
+      - name: Create Screenshot Directory
         run: |
-          echo "=== Extracting RealVNC Installer ==="
+          echo "=== Creating Screenshot Directory ==="
+          mkdir -p screenshots
+          echo "SCREENSHOT_DIR=$(pwd)/screenshots" >> $GITHUB_ENV
           
-          # Create extraction directory
-          mkdir -p "$EXTRACT_PATH"
-          
-          # Extract the zip file
-          echo "Extracting to: $EXTRACT_PATH"
-          if unzip -q "$DOWNLOAD_PATH" -d "$EXTRACT_PATH"; then
-            echo "✅ Extraction successful"
-          else
-            echo "❌ Extraction failed"
-            exit 1
-          fi
-          
-          # List extracted contents
-          echo ""
-          echo "=== Extracted Contents ==="
-          find "$EXTRACT_PATH" -type f -name "*.app" -o -name "*.pkg" -o -name "*.dmg" | while read file; do
-            echo "- $(basename "$file")"
-          done
-          
-          # Find the main installer app
-          INSTALLER_APP=$(find "$EXTRACT_PATH" -name "*.app" -type d | head -1)
-          if [ -n "$INSTALLER_APP" ]; then
-            echo "Found installer: $INSTALLER_APP"
-            echo "INSTALLER_APP=$INSTALLER_APP" >> $GITHUB_ENV
-          else
-            echo "❌ No .app file found in extracted contents"
-            exit 1
-          fi
+          # Create metadata file
+          METADATA_FILE="$SCREENSHOT_DIR/metadata.txt"
+          echo "VNC Viewer Test Session" > "$METADATA_FILE"
+          echo "======================" >> "$METADATA_FILE"
+          echo "Date: $(date)" >> "$METADATA_FILE"
+          echo "macOS Version: $(sw_vers -productVersion)" >> "$METADATA_FILE"
+          echo "VNC Viewer Version: 7.15.1" >> "$METADATA_FILE"
+          echo "" >> "$METADATA_FILE"
 
-      - name: Take Pre-Installation Screenshot
+      - name: Get Display Information
         run: |
-          echo "=== Taking Pre-Installation Screenshot ==="
+          echo "=== Display Information ==="
+          
+          # Get screen resolution
+          echo "Screen Information:"
+          system_profiler SPDisplaysDataType | grep -A5 "Display"
+          
+          # Get resolution for calculations
+          RESOLUTION=$(system_profiler SPDisplaysDataType 2>/dev/null | grep -A1 "Resolution:" | tail -1 | tr -d ' ' | sed 's/[^0-9x]//g')
+          
+          if [ -z "$RESOLUTION" ] || [ "$RESOLUTION" = "0x0" ]; then
+            RESOLUTION="1440x900"  # Default for macOS runners
+            echo "⚠️ Using default resolution: $RESOLUTION"
+          else
+            echo "Detected resolution: $RESOLUTION"
+          fi
+          
+          WIDTH=$(echo "$RESOLUTION" | cut -d'x' -f1)
+          HEIGHT=$(echo "$RESOLUTION" | cut -d'x' -f2)
+          
+          echo "RESOLUTION=$RESOLUTION" >> $GITHUB_ENV
+          echo "SCREEN_WIDTH=$WIDTH" >> $GITHUB_ENV
+          echo "SCREEN_HEIGHT=$HEIGHT" >> $GITHUB_ENV
+
+      - name: Initial System Screenshot
+        run: |
+          echo "=== Taking Initial System Screenshot ==="
           
           timestamp=$(date +%Y%m%d_%H%M%S)
-          screenshot_file="$SCREENSHOT_DIR/pre_install_$timestamp.png"
+          screenshot_file="$SCREENSHOT_DIR/01_initial_desktop_$timestamp.png"
           
           screencapture -x "$screenshot_file"
           
           if [ -f "$screenshot_file" ]; then
             filesize=$(ls -lh "$screenshot_file" | awk '{print $5}')
-            echo "✅ Pre-installation screenshot saved: $(basename $screenshot_file) ($filesize)"
+            echo "✅ Initial screenshot: $screenshot_file ($filesize)"
           else
-            echo "⚠️ Failed to take pre-installation screenshot"
+            echo "⚠️ Failed to take initial screenshot"
           fi
 
-      - name: Install RealVNC Connect
+      - name: Launch VNC Viewer
         run: |
-          echo "=== Installing RealVNC Connect ==="
+          echo "=== Launching VNC Viewer ==="
           
-          # Check if installer exists
-          if [ ! -d "$INSTALLER_APP" ]; then
-            echo "❌ Installer app not found: $INSTALLER_APP"
+          # Clean up any existing instances
+          pkill -f "VNC Viewer" 2>/dev/null || true
+          sleep 2
+          
+          # Launch VNC Viewer
+          if [ -d "/Applications/VNC Viewer.app" ]; then
+            echo "Launching VNC Viewer from /Applications/VNC Viewer.app"
+            open -a "/Applications/VNC Viewer.app"
+            APP_NAME="VNC Viewer"
+          elif [ -d "/Applications/VNC-Viewer.app" ]; then
+            echo "Launching VNC Viewer from /Applications/VNC-Viewer.app"
+            open -a "/Applications/VNC-Viewer.app"
+            APP_NAME="VNC-Viewer"
+          else
+            echo "❌ VNC Viewer not found in Applications!"
             exit 1
           fi
           
-          echo "Installer path: $INSTALLER_APP"
-          echo "Installer name: $(basename "$INSTALLER_APP")"
-          
-          # Get app name (remove .app extension if present)
-          APP_NAME=$(basename "$INSTALLER_APP" .app)
-          echo "App name: $APP_NAME"
-          
-          # Take screenshot before installation
-          before_install="$SCREENSHOT_DIR/before_install_$(date +%H%M%S).png"
-          screencapture -x "$before_install"
-          
-          # Method 1: Try to open the installer
-          echo "Opening installer..."
-          open "$INSTALLER_APP"
-          
-          # Wait for installer to appear
-          echo "Waiting for installer to launch..."
-          for i in {1..30}; do
-            if pgrep -f "$APP_NAME" > /dev/null || osascript -e "application \"$APP_NAME\" is running" 2>/dev/null; then
-              echo "✅ Installer launched (attempt $i)"
-              break
-            fi
-            sleep 1
-          done
-          
-          # Give more time for UI to appear
-          sleep 5
-          
-          # Take screenshot of installer
-          installer_screen="$SCREENSHOT_DIR/installer_ui_$(date +%H%M%S).png"
-          screencapture -x "$installer_screen"
-          
-          # Method 2: If it's a .app bundle, we might need to run it differently
-          echo "Checking installer type..."
-          
-          # Look for PKG files inside the app bundle
-          PKG_FILES=$(find "$INSTALLER_APP" -name "*.pkg" -type f 2>/dev/null)
-          if [ -n "$PKG_FILES" ]; then
-            echo "Found PKG files inside app bundle:"
-            echo "$PKG_FILES"
-            
-            # Try to install the first PKG found
-            FIRST_PKG=$(echo "$PKG_FILES" | head -1)
-            echo "Attempting to install PKG: $FIRST_PKG"
-            
-            # Take screenshot before PKG installation
-            before_pkg="$SCREENSHOT_DIR/before_pkg_install_$(date +%H%M%S).png"
-            screencapture -x "$before_pkg"
-            
-            # Try silent installation if possible
-            echo "Attempting PKG installation..."
-            sudo installer -pkg "$FIRST_PKG" -target / 2>&1 | tee "$LOG_DIR/pkg_install.log" || echo "PKG installation may require GUI"
-          fi
-          
-          # Check for DMG files
-          DMG_FILES=$(find "$EXTRACT_PATH" -name "*.dmg" -type f 2>/dev/null)
-          if [ -n "$DMG_FILES" ]; then
-            echo "Found DMG files:"
-            echo "$DMG_FILES"
-            
-            FIRST_DMG=$(echo "$DMG_FILES" | head -1)
-            echo "Mounting DMG: $FIRST_DMG"
-            
-            # Mount the DMG
-            hdiutil attach "$FIRST_DMG" -nobrowse 2>&1 | tee "$LOG_DIR/dmg_mount.log"
-            
-            # Find apps in mounted volume
-            VOLUME_PATH=$(hdiutil attach "$FIRST_DMG" -nobrowse | tail -1 | awk '{$1=$2=""; print $0}' | xargs)
-            echo "Mounted at: $VOLUME_PATH"
-            
-            # Look for app in mounted volume
-            find "$VOLUME_PATH" -name "*.app" -type d | while read app_path; do
-              echo "Found app in DMG: $app_path"
-              
-              # Copy to Applications
-              echo "Copying to Applications..."
-              cp -R "$app_path" "/Applications/" 2>&1 | tee -a "$LOG_DIR/app_copy.log"
-            done
-            
-            # Unmount when done
-            hdiutil detach "$VOLUME_PATH" 2>&1 | tee -a "$LOG_DIR/dmg_unmount.log"
-          fi
-          
-          # Wait for any installation to complete
-          sleep 10
-          
-          # Take screenshot after installation attempt
-          after_install="$SCREENSHOT_DIR/after_install_$(date +%H%M%S).png"
-          screencapture -x "$after_install"
-          
-          echo "✅ Installation process completed"
-
-      - name: Launch RealVNC Connect
-        run: |
-          echo "=== Launching RealVNC Connect ==="
-          
-          # Find RealVNC Connect in Applications
-          VNC_APPS=(
-            "/Applications/RealVNC Connect.app"
-            "/Applications/RealVNC Connect/RealVNC Connect.app"
-            "/Applications/VNC Connect.app"
-            "/Applications/VNC-Server.app"
-            "/Applications/VNC-Viewer.app"
-          )
-          
-          VNC_APP=""
-          for app in "${VNC_APPS[@]}"; do
-            if [ -d "$app" ]; then
-              VNC_APP="$app"
-              echo "Found RealVNC app at: $VNC_APP"
-              break
-            fi
-          done
-          
-          if [ -z "$VNC_APP" ]; then
-            # Search for any VNC-related app
-            echo "Searching for VNC apps..."
-            VNC_APP=$(find /Applications -name "*VNC*" -type d -maxdepth 2 2>/dev/null | head -1)
-            if [ -n "$VNC_APP" ]; then
-              echo "Found VNC app via search: $VNC_APP"
-            else
-              echo "❌ No VNC app found in Applications"
-              exit 1
-            fi
-          fi
-          
-          # Take screenshot before launch
-          before_launch="$SCREENSHOT_DIR/before_launch_$(date +%H%M%S).png"
-          screencapture -x "$before_launch"
-          
-          # Launch the app
-          echo "Launching: $VNC_APP"
-          open -a "$VNC_APP"
+          echo "APP_NAME=$APP_NAME" >> $GITHUB_ENV
           
           # Wait for app to launch
-          echo "Waiting for RealVNC Connect to start..."
+          echo "Waiting for VNC Viewer to launch..."
           for i in {1..30}; do
-            APP_PROCESS=$(basename "$VNC_APP" .app)
-            if pgrep -f "$APP_PROCESS" > /dev/null; then
-              echo "✅ RealVNC Connect launched (attempt $i)"
+            if pgrep -f "$APP_NAME" > /dev/null; then
+              echo "✅ $APP_NAME process found (attempt $i)"
               break
             fi
             sleep 1
           done
           
-          # Give time for UI to appear
-          sleep 8
-          
-          # Take screenshot after launch
-          after_launch="$SCREENSHOT_DIR/after_launch_$(date +%H%M%S).png"
-          screencapture -x "$after_launch"
-          
-          # Store app info for later use
-          echo "VNC_APP=$VNC_APP" >> $GITHUB_ENV
-          echo "VNC_PROCESS=$(basename "$VNC_APP" .app)" >> $GITHUB_ENV
-
-      - name: Interact with RealVNC UI
-        run: |
-          echo "=== Interacting with RealVNC UI ==="
-          
-          # Take screenshot before interaction
-          before_interact="$SCREENSHOT_DIR/before_interaction_$(date +%H%M%S).png"
-          screencapture -x "$before_interact"
-          
-          # Try to interact with the UI using AppleScript
-          echo "Attempting to interact with RealVNC UI..."
-          
-          # First, let's see what windows are available
-          osascript <<'EOF' 2>&1 | tee "$LOG_DIR/window_info.log"
-          tell application "System Events"
-            try
-              tell process "$VNC_PROCESS"
-                set windowNames to name of every window
-                return "Available windows: " & windowNames
-              end tell
-            on error errMsg
-              return "Error getting windows: " & errMsg
-            end try
-          end tell
-          EOF
-          
-          # Try to click common UI elements
-          echo "Attempting to click UI elements..."
-          
-          # Common RealVNC UI elements to try
-          osascript <<'EOF' 2>&1 | tee "$LOG_DIR/ui_interaction.log"
-          tell application "System Events"
-            try
-              tell process "$VNC_PROCESS"
-                -- Try to find and click buttons
-                set allButtons to buttons of window 1
-                repeat with i from 1 to count of allButtons
-                  try
-                    set btn to item i of allButtons
-                    set btnName to name of btn
-                    if btnName is not "" then
-                      log "Found button: " & btnName
-                      -- Try clicking common buttons
-                      if btnName contains "Connect" or btnName contains "Start" or btnName contains "OK" or btnName contains "Continue" then
-                        click btn
-                        log "Clicked button: " & btnName
-                        delay 1
-                      end if
-                    end if
-                  end try
-                end repeat
-                
-                -- Try to find text fields
-                set allFields to text fields of window 1
-                repeat with i from 1 to count of allFields
-                  try
-                    set field to item i of allFields
-                    set fieldValue to value of field
-                    log "Found text field with value: " & fieldValue
-                  end try
-                end repeat
-                
-                return "UI interaction attempted"
-              end tell
-            on error errMsg
-              return "UI interaction error: " & errMsg
-            end try
-          end tell
-          EOF
-          
-          # Wait for UI to update
+          # Additional wait for UI to load
           sleep 5
           
-          # Take screenshot after interaction
-          after_interact="$SCREENSHOT_DIR/after_interaction_$(date +%H%M%S).png"
-          screencapture -x "$after_interact"
-          
-          echo "✅ UI interaction completed"
+          # Take screenshot after launch
+          launch_file="$SCREENSHOT_DIR/02_after_launch_$(date +%H%M%S).png"
+          screencapture -x "$launch_file"
+          echo "📸 Launch screenshot taken"
 
-      - name: Take Multiple Screenshots
+      - name: Interact with VNC Viewer
         run: |
-          echo "=== Taking Multiple Screenshots ==="
+          echo "=== Interacting with VNC Viewer ==="
           
-          # Take 5 screenshots with delays
-          for i in {1..5}; do
-            echo ""
-            echo "📸 Taking screenshot $i/5..."
+          # Wait a bit more for UI to stabilize
+          sleep 3
+          
+          # Take screenshot of main window
+          main_window_file="$SCREENSHOT_DIR/03_main_window_$(date +%H%M%S).png"
+          screencapture -x "$main_window_file"
+          echo "✅ Main window screenshot"
+          
+          # Try to interact with the UI using AppleScript
+          echo "Attempting to interact with VNC Viewer UI..."
+          
+          /usr/bin/osascript <<'EOF' || echo "AppleScript interaction attempted"
+          tell application "System Events"
+            delay 2
             
-            timestamp=$(date +%Y%m%d_%H%M%S)
-            filepath="$SCREENSHOT_DIR/screenshot_${i}_${timestamp}.png"
-            
-            screencapture -x "$filepath"
-            
-            if [ -f "$filepath" ]; then
-              filesize=$(ls -lh "$filepath" | awk '{print $5}')
-              echo "✅ Saved: $(basename $filepath) ($filesize)"
+            -- Try to find VNC Viewer process
+            if exists process "VNC Viewer" then
+              tell process "VNC Viewer"
+                -- Activate the application
+                activate
+                delay 1
+                
+                -- Try to get window information
+                try
+                  set windowNames to name of every window
+                  log "VNC Viewer Windows: " & (count of windowNames)
+                  
+                  -- Take a screenshot after activation
+                  do shell script "screencapture -x $SCREENSHOT_DIR/04_after_activate_$(date +%H%M%S).png"
+                  
+                  -- Try to click in common locations (center of screen)
+                  set screenWidth to 1440
+                  set screenHeight to 900
+                  
+                  -- Click in the center (where connection dialog might be)
+                  click at {screenWidth / 2, screenHeight / 2}
+                  delay 1
+                  
+                  -- Take screenshot after click
+                  do shell script "screencapture -x $SCREENSHOT_DIR/05_after_center_click_$(date +%H%M%S).png"
+                  
+                  -- Press Escape to close any dialogs
+                  key code 53
+                  delay 1
+                  
+                on error errMsg
+                  log "Error interacting with VNC Viewer: " & errMsg
+                end try
+              end tell
             else
-              echo "⚠️ Failed to take screenshot $i"
-            fi
-            
-            if [ $i -lt 5 ]; then
-              echo "   Waiting 3 seconds..."
-              sleep 3
-            fi
-          done
+              log "VNC Viewer process not found"
+            end if
+          end tell
+          EOF
           
-          # List all screenshots
-          echo ""
-          echo "=== All Screenshots ==="
-          ls -la "$SCREENSHOT_DIR/"*.png 2>/dev/null | awk '{print $5, $9}' | while read line; do
-            echo "- $line"
-          done
+          # Additional screenshots of UI state
+          sleep 2
+          after_interaction_file="$SCREENSHOT_DIR/06_after_interaction_$(date +%H%M%S).png"
+          screencapture -x "$after_interaction_file"
+          echo "✅ Post-interaction screenshot"
 
-      - name: Gather System Information
+      - name: Test Common UI Actions
         run: |
-          echo "=== Gathering System Information ==="
+          echo "=== Testing Common UI Actions ==="
           
-          INFO_FILE="$LOG_DIR/system_info.txt"
+          # Install cliclick for precise clicking if needed
+          if ! command -v cliclick &> /dev/null; then
+            echo "Installing cliclick for precise clicking..."
+            brew install cliclick
+          fi
           
-          echo "RealVNC Connect Test Report" > "$INFO_FILE"
+          # Take screenshot before actions
+          before_actions_file="$SCREENSHOT_DIR/07_before_actions_$(date +%H%M%S).png"
+          screencapture -x "$before_actions_file"
+          
+          # Define click positions (relative to typical VNC Viewer UI)
+          # These are educated guesses based on typical UI layouts
+          CENTER_X=$((SCREEN_WIDTH / 2))
+          CENTER_Y=$((SCREEN_HEIGHT / 2))
+          
+          TOP_CENTER_X=$CENTER_X
+          TOP_CENTER_Y=$((SCREEN_HEIGHT / 4))
+          
+          BOTTOM_RIGHT_X=$((SCREEN_WIDTH * 3 / 4))
+          BOTTOM_RIGHT_Y=$((SCREEN_HEIGHT * 3 / 4))
+          
+          echo "Click positions:"
+          echo "  Center: ($CENTER_X, $CENTER_Y)"
+          echo "  Top Center: ($TOP_CENTER_X, $TOP_CENTER_Y)"
+          echo "  Bottom Right: ($BOTTOM_RIGHT_X, $BOTTOM_RIGHT_Y)"
+          
+          # Perform clicks with delays
+          echo "Performing UI clicks..."
+          
+          # Click center (where connection field might be)
+          cliclick c:$CENTER_X,$CENTER_Y
+          sleep 1
+          screenshot_center="$SCREENSHOT_DIR/08_after_center_click_$(date +%H%M%S).png"
+          screencapture -x "$screenshot_center"
+          
+          # Click top center (where menu bar might be)
+          cliclick c:$TOP_CENTER_X,$TOP_CENTER_Y
+          sleep 1
+          screenshot_top="$SCREENSHOT_DIR/09_after_top_click_$(date +%H%M%S).png"
+          screencapture -x "$screenshot_top"
+          
+          # Click bottom right (where buttons might be)
+          cliclick c:$BOTTOM_RIGHT_X,$BOTTOM_RIGHT_Y
+          sleep 1
+          screenshot_bottom="$SCREENSHOT_DIR/10_after_bottom_click_$(date +%H%M%S).png"
+          screencapture -x "$screenshot_bottom"
+          
+          echo "✅ UI action testing complete"
+
+      - name: Test Menu Access
+        run: |
+          echo "=== Testing Menu Access ==="
+          
+          # Try to access menu using AppleScript
+          /usr/bin/osascript <<'EOF' 2>&1 | tee -a "$SCREENSHOT_DIR/menu_test.log" || true
+          tell application "System Events"
+            delay 1
+            
+            -- Try to activate menu bar
+            if exists process "VNC Viewer" then
+              tell process "VNC Viewer"
+                activate
+                delay 1
+                
+                -- Try to click on menu bar items
+                try
+                  -- Click on Apple menu (always at top-left)
+                  click at {20, 20}
+                  delay 1
+                  
+                  -- Take screenshot of menu
+                  do shell script "screencapture -x $SCREENSHOT_DIR/11_menu_display_$(date +%H%M%S).png"
+                  
+                  -- Press Escape to close menu
+                  key code 53
+                  delay 1
+                  
+                  -- Try File menu (common position)
+                  click at {100, 20}
+                  delay 1
+                  do shell script "screencapture -x $SCREENSHOT_DIR/12_file_menu_$(date +%H%M%S).png"
+                  key code 53
+                  
+                on error errMsg
+                  log "Menu test error: " & errMsg
+                end try
+              end tell
+            end if
+          end tell
+          EOF
+          
+          # Final screenshot after menu tests
+          sleep 2
+          final_menu_file="$SCREENSHOT_DIR/13_final_menu_test_$(date +%H%M%S).png"
+          screencapture -x "$final_menu_file"
+
+      - name: Capture Application Info
+        run: |
+          echo "=== Capturing Application Information ==="
+          
+          INFO_FILE="$SCREENSHOT_DIR/application_info.txt"
+          
+          echo "VNC Viewer Application Details" > "$INFO_FILE"
           echo "=============================" >> "$INFO_FILE"
           echo "" >> "$INFO_FILE"
           
-          echo "Test Date: $(date)" >> "$INFO_FILE"
-          echo "macOS Version: $(sw_vers -productVersion)" >> "$INFO_FILE"
-          echo "RealVNC Version: $VNC_VERSION" >> "$INFO_FILE"
+          # Get app location
+          echo "Application Locations:" >> "$INFO_FILE"
+          ls -la "/Applications/" | grep -i vnc >> "$INFO_FILE" || echo "Not found" >> "$INFO_FILE"
           echo "" >> "$INFO_FILE"
           
-          echo "=== Installation Details ===" >> "$INFO_FILE"
-          echo "Download URL: $DOWNLOAD_URL" >> "$INFO_FILE"
-          echo "Installer Path: $INSTALLER_APP" >> "$INFO_FILE"
-          if [ -n "$VNC_APP" ]; then
-            echo "Installed App: $VNC_APP" >> "$INFO_FILE"
+          # Get process info
+          echo "Running Processes:" >> "$INFO_FILE"
+          ps aux | grep -i "vnc" | grep -v grep >> "$INFO_FILE" || echo "No VNC processes found" >> "$INFO_FILE"
+          echo "" >> "$INFO_FILE"
+          
+          # Get bundle info
+          echo "Bundle Information:" >> "$INFO_FILE"
+          if [ -d "/Applications/VNC Viewer.app" ]; then
+            defaults read "/Applications/VNC Viewer.app/Contents/Info" CFBundleIdentifier 2>/dev/null >> "$INFO_FILE" || echo "Could not read bundle info" >> "$INFO_FILE"
           fi
           echo "" >> "$INFO_FILE"
           
-          echo "=== Running Processes ===" >> "$INFO_FILE"
-          pgrep -f "VNC" >> "$INFO_FILE" || echo "No VNC processes found" >> "$INFO_FILE"
-          echo "" >> "$INFO_FILE"
+          # Disk usage
+          echo "Disk Usage:" >> "$INFO_FILE"
+          if [ -d "/Applications/VNC Viewer.app" ]; then
+            du -sh "/Applications/VNC Viewer.app" >> "$INFO_FILE"
+          fi
           
-          echo "=== Installed Applications ===" >> "$INFO_FILE"
-          find /Applications -name "*VNC*" -type d -maxdepth 2 2>/dev/null >> "$INFO_FILE"
-          echo "" >> "$INFO_FILE"
-          
-          echo "=== Screenshots Taken ===" >> "$INFO_FILE"
-          find "$SCREENSHOT_DIR" -name "*.png" -type f -exec basename {} \; >> "$INFO_FILE"
-          echo "" >> "$INFO_FILE"
-          
-          echo "=== Disk Usage ===" >> "$INFO_FILE"
-          du -sh "$EXTRACT_PATH" 2>/dev/null >> "$INFO_FILE" || echo "Extract path not found" >> "$INFO_FILE"
-          echo "" >> "$INFO_FILE"
-          
-          # Display the info
-          cat "$INFO_FILE"
+          echo "✅ Application info captured"
 
-      - name: Upload Screenshots and Logs
+      - name: Final Screenshots and Cleanup
+        run: |
+          echo "=== Final Screenshots and Cleanup ==="
+          
+          # Take a few final screenshots
+          for i in {1..3}; do
+            final_file="$SCREENSHOT_DIR/14_final_${i}_$(date +%H%M%S).png"
+            screencapture -x "$final_file"
+            sleep 1
+          done
+          
+          # Quit VNC Viewer
+          echo "Quitting VNC Viewer..."
+          osascript -e 'tell application "VNC Viewer" to quit' 2>/dev/null || true
+          osascript -e 'tell application "VNC-Viewer" to quit' 2>/dev/null || true
+          
+          # Force quit if needed
+          sleep 2
+          pkill -f "VNC Viewer" 2>/dev/null || true
+          pkill -f "VNC-Viewer" 2>/dev/null || true
+          
+          # List all screenshots
+          echo ""
+          echo "=== All Screenshots Captured ==="
+          ls -lh "$SCREENSHOT_DIR/" | grep ".png"
+          echo ""
+          echo "Total screenshots: $(find "$SCREENSHOT_DIR" -name "*.png" | wc -l)"
+
+      - name: Upload Screenshots
         uses: actions/upload-artifact@v4
         with:
-          name: realvnc-screenshots-logs
+          name: vnc-viewer-screenshots-macos-15.7.2
           path: |
             ${{ env.SCREENSHOT_DIR }}
-            ${{ env.LOG_DIR }}
-            ${{ env.DOWNLOAD_PATH }}
+            downloads/VNC-Viewer.dmg
           retention-days: 7
 
-      - name: Upload Installation Report
+      - name: Upload Summary
         uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: realvnc-installation-report
+          name: vnc-viewer-test-summary
           path: |
-            ${{ env.LOG_DIR }}/system_info.txt
-            ${{ env.LOG_DIR }}/*.log
+            ${{ env.SCREENSHOT_DIR }}/metadata.txt
+            ${{ env.SCREENSHOT_DIR }}/application_info.txt
+            ${{ env.SCREENSHOT_DIR }}/menu_test.log
           retention-days: 7
 
-      - name: Cleanup
-        if: always()
+      - name: Final Report
         run: |
-          echo "=== Performing Cleanup ==="
-          
-          # Take final screenshot
-          final_screenshot="$SCREENSHOT_DIR/final_$(date +%H%M%S).png"
-          screencapture -x "$final_screenshot" 2>/dev/null && echo "✅ Final screenshot taken" || echo "⚠️ Could not take final screenshot"
-          
-          # Quit RealVNC if running
-          if [ -n "$VNC_PROCESS" ]; then
-            echo "Quitting RealVNC Connect..."
-            osascript -e "tell application \"$VNC_PROCESS\" to quit" 2>/dev/null || true
-            sleep 2
-            pkill -f "$VNC_PROCESS" 2>/dev/null || true
-          fi
-          
-          # Unmount any DMG volumes
-          echo "Unmounting any DMG volumes..."
-          hdiutil detach /Volumes/*VNC* 2>/dev/null || true
-          hdiutil detach /Volumes/*RealVNC* 2>/dev/null || true
-          
-          # Remove temporary files (keep for artifact upload)
-          echo "Cleanup completed"
-          echo "Total screenshots: $(find "$SCREENSHOT_DIR" -name "*.png" 2>/dev/null | wc -l)"
-          echo "Total log files: $(find "$LOG_DIR" -name "*.log" 2>/dev/null | wc -l)"
+          echo "=== VNC Viewer Test Complete ==="
+          echo ""
+          echo "📊 Summary:"
+          echo "  macOS Version: $(sw_vers -productVersion)"
+          echo "  VNC Viewer: 7.15.1"
+          echo "  Screenshots taken: $(find "$SCREENSHOT_DIR" -name "*.png" 2>/dev/null | wc -l)"
+          echo "  Test duration: ~25 minutes"
+          echo ""
+          echo "✅ Workflow completed successfully!"
