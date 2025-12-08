@@ -230,7 +230,7 @@ jobs:
           echo "=== All Screenshots ==="
           ls -la "$SCREENSHOT_DIR/" 2>/dev/null | head -15
 
-      - name: Additional UI Clicks (Extended with 4th and 5th clicks)
+            - name: Additional UI Clicks (Extended with 4th and 5th clicks)
         run: |
           echo "=== Performing Additional UI Clicks ==="
           
@@ -242,7 +242,7 @@ jobs:
           ORIGINAL_HEIGHT=768
           
           # Define all click coordinates
-          CLICK_COORDS=(
+          declare -a CLICK_COORDS=(
             "210 563"    # Click 1
             "542 293"    # Click 2
             "820 316"    # Click 3
@@ -270,9 +270,8 @@ jobs:
             
             echo "Click $((i+1)): Original ($ORIG_X, $ORIG_Y) -> Scaled ($SCALED_X, $SCALED_Y)"
             
-            # Store in environment variables
-            echo "SCALED_X$((i+1))=$SCALED_X" >> $GITHUB_ENV
-            echo "SCALED_Y$((i+1))=$SCALED_Y" >> $GITHUB_ENV
+            # Store in array instead of environment variables (they don't persist well in loops)
+            SCALED_COORDS[$i]="$SCALED_X $SCALED_Y"
           done
           
           # Ensure cliclick is installed
@@ -285,19 +284,22 @@ jobs:
           echo "=== Executing Clicks ==="
           
           # Perform all 5 clicks with 2-second delays
-          for i in {1..5}; do
-            # Get scaled coordinates from environment variables
-            X_VAR="SCALED_X$i"
-            Y_VAR="SCALED_Y$i"
-            CLICK_X=${!X_VAR}
-            CLICK_Y=${!Y_VAR}
+          for i in "${!SCALED_COORDS[@]}"; do
+            CLICK_X=$(echo "${SCALED_COORDS[$i]}" | awk '{print $1}')
+            CLICK_Y=$(echo "${SCALED_COORDS[$i]}" | awk '{print $2}')
+            
+            # Validate coordinates are not empty
+            if [ -z "$CLICK_X" ] || [ -z "$CLICK_Y" ]; then
+              echo "⚠️ ERROR: Empty coordinates for click $((i+1))! Skipping..."
+              continue
+            fi
             
             echo ""
-            echo "🔘 Performing click $i at ($CLICK_X, $CLICK_Y)..."
+            echo "🔘 Performing click $((i+1)) at ($CLICK_X, $CLICK_Y)..."
             cliclick c:$CLICK_X,$CLICK_Y
-            echo "✅ Click $i completed"
+            echo "✅ Click $((i+1)) completed"
             
-            if [ $i -lt 5 ]; then
+            if [ $i -lt $(( ${#SCALED_COORDS[@]} - 1 )) ]; then
               echo "⏳ Waiting 2 seconds..."
               sleep 2
             fi
