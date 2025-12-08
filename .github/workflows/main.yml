@@ -1,118 +1,21 @@
-name: Run sshx.io Connection
+name: sshx.io Connection with URL Capture
 
 on:
   workflow_dispatch:
 
 jobs:
   sshx-connection:
-    runs-on: macos-latest
-    timeout-minutes: 15  # 10 minutes + buffer
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
-      - name: Check macOS Version
+      - name: Run sshx.io and capture URL
         run: |
-          echo "=== System Information ==="
-          sw_vers
-          echo "Hostname: $(hostname)"
-          echo "IP Info:"
-          ifconfig en0 | grep "inet " || true
-          echo "User: $(whoami)"
-
-      - name: Install and Run sshx
-        id: sshx
-        run: |
-          echo "=== Installing and Running sshx.io ==="
+          echo "=== Running sshx.io ==="
+          echo "The connection URL will appear below once sshx starts..."
+          echo "This workflow will remain active for up to 10 minutes."
+          echo ""
+          echo "Waiting for sshx.io connection..."
           
-          # Install sshx
-          echo "Installing sshx.io..."
+          # Run sshx - it will output the URL
           curl -sSf https://sshx.io/get | sh
-          
-          # Run sshx in background and capture URL
-          echo "Starting sshx connection..."
-          
-          # Create a script to run sshx and extract URL
-          cat > run_sshx.sh << 'EOF'
-#!/bin/bash
-# Run sshx and capture the connection URL
-exec 5>&1
-OUTPUT=$(sshx 2>&1 | tee /dev/fd/5)
-URL=$(echo "$OUTPUT" | grep -o 'https://sshx.io/[a-zA-Z0-9-]*' | head -1)
-if [ -n "$URL" ]; then
-  echo "SSHX_URL=$URL" >> $GITHUB_ENV
-  echo "url_output=$URL" >> $GITHUB_OUTPUT
-  echo "✅ sshx URL captured: $URL"
-else
-  echo "❌ Could not extract sshx URL from output"
-fi
-EOF
-          
-          chmod +x run_sshx.sh
-          
-          # Run sshx in background
-          ./run_sshx.sh &
-          SSHX_PID=$!
-          
-          # Wait a moment for URL to be captured
-          sleep 3
-          
-          # Save PID for later
-          echo "SSHX_PID=$SSHX_PID" >> $GITHUB_ENV
-          
-          # Display the URL if captured
-          if [ -n "${{ env.SSHX_URL }}" ]; then
-            echo "✅ SSHX Connection URL: ${{ env.SSHX_URL }}"
-          fi
-
-      - name: Display Connection URL
-        run: |
-          echo "=========================================="
-          echo "🌐 SSHX CONNECTION ESTABLISHED!"
-          echo "=========================================="
-          echo ""
-          echo "🔗 Your connection URL is:"
-          echo "   ${{ env.SSHX_URL }}"
-          echo ""
-          echo "📋 Copy this URL and open it in your browser to access"
-          echo "   this GitHub Actions runner."
-          echo ""
-          echo "⏱️  This workflow will remain active for 10 minutes..."
-          echo "=========================================="
-
-      - name: Keep Workflow Running
-        run: |
-          echo "=== Keeping workflow active for 10 minutes ==="
-          echo "Start time: $(date)"
-          echo "Will run until: $(date -v+10M)"
-          echo ""
-          echo "⚠️  DO NOT CANCEL THIS WORKFLOW"
-          echo "The sshx connection will remain active for 10 minutes"
-          echo "You can now connect using the URL above"
-          echo ""
-          
-          # Keep the workflow running
-          for i in {1..600}; do
-            if [ $((i % 30)) -eq 0 ]; then
-              echo "[$(date)] Still running... ($i seconds elapsed)"
-            fi
-            sleep 1
-          done
-          
-          echo "✅ 10 minutes completed"
-
-      - name: Cleanup
-        if: always()
-        run: |
-          echo "=== Cleaning up sshx connection ==="
-          
-          # Kill sshx process if still running
-          if [ -n "$SSHX_PID" ] && ps -p $SSHX_PID > /dev/null 2>&1; then
-            echo "Stopping sshx process (PID: $SSHX_PID)..."
-            kill $SSHX_PID 2>/dev/null || true
-            sleep 2
-          fi
-          
-          # Additional cleanup
-          pkill -f "sshx" 2>/dev/null || true
-          
-          echo "✅ Cleanup complete"
-          echo "Workflow ended at: $(date)"
