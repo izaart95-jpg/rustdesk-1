@@ -230,7 +230,7 @@ jobs:
           echo "=== All Screenshots ==="
           ls -la "$SCREENSHOT_DIR/" 2>/dev/null | head -15
 
-            - name: Additional UI Clicks (Extended with 4th and 5th clicks)
+      - name: Additional UI Clicks (Fixed - Extended with 4th and 5th clicks)
         run: |
           echo "=== Performing Additional UI Clicks ==="
           
@@ -241,7 +241,7 @@ jobs:
           ORIGINAL_WIDTH=1024
           ORIGINAL_HEIGHT=768
           
-          # Define all click coordinates
+          # Define all click coordinates as an array
           declare -a CLICK_COORDS=(
             "210 563"    # Click 1
             "542 293"    # Click 2
@@ -259,6 +259,10 @@ jobs:
           echo "Scaling factors: X=${X_SCALE}, Y=${Y_SCALE}"
           echo ""
           
+          # Arrays to store scaled coordinates
+          declare -a SCALED_X_COORDS
+          declare -a SCALED_Y_COORDS
+          
           # Calculate and display all scaled coordinates
           echo "=== Click Coordinates ==="
           for i in "${!CLICK_COORDS[@]}"; do
@@ -268,10 +272,11 @@ jobs:
             SCALED_X=$(echo "$ORIG_X * $X_SCALE" | bc | awk '{printf "%.0f", $1}')
             SCALED_Y=$(echo "$ORIG_Y * $Y_SCALE" | bc | awk '{printf "%.0f", $1}')
             
-            echo "Click $((i+1)): Original ($ORIG_X, $ORIG_Y) -> Scaled ($SCALED_X, $SCALED_Y)"
+            # Store in arrays
+            SCALED_X_COORDS[$i]=$SCALED_X
+            SCALED_Y_COORDS[$i]=$SCALED_Y
             
-            # Store in array instead of environment variables (they don't persist well in loops)
-            SCALED_COORDS[$i]="$SCALED_X $SCALED_Y"
+            echo "Click $((i+1)): Original ($ORIG_X, $ORIG_Y) -> Scaled ($SCALED_X, $SCALED_Y)"
           done
           
           # Ensure cliclick is installed
@@ -284,9 +289,9 @@ jobs:
           echo "=== Executing Clicks ==="
           
           # Perform all 5 clicks with 2-second delays
-          for i in "${!SCALED_COORDS[@]}"; do
-            CLICK_X=$(echo "${SCALED_COORDS[$i]}" | awk '{print $1}')
-            CLICK_Y=$(echo "${SCALED_COORDS[$i]}" | awk '{print $2}')
+          for i in "${!CLICK_COORDS[@]}"; do
+            CLICK_X=${SCALED_X_COORDS[$i]}
+            CLICK_Y=${SCALED_Y_COORDS[$i]}
             
             # Validate coordinates are not empty
             if [ -z "$CLICK_X" ] || [ -z "$CLICK_Y" ]; then
@@ -299,7 +304,7 @@ jobs:
             cliclick c:$CLICK_X,$CLICK_Y
             echo "✅ Click $((i+1)) completed"
             
-            if [ $i -lt $(( ${#SCALED_COORDS[@]} - 1 )) ]; then
+            if [ $i -lt $(( ${#CLICK_COORDS[@]} - 1 )) ]; then
               echo "⏳ Waiting 2 seconds..."
               sleep 2
             fi
@@ -323,6 +328,13 @@ jobs:
           fi
           
           echo "=== All 5 Additional UI Clicks Completed ==="
+          
+          # Store click coordinates for the next step
+          echo "CLICK_COUNT=${#CLICK_COORDS[@]}" >> $GITHUB_ENV
+          for i in "${!CLICK_COORDS[@]}"; do
+            echo "CLICK_$((i+1))_X=${SCALED_X_COORDS[$i]}" >> $GITHUB_ENV
+            echo "CLICK_$((i+1))_Y=${SCALED_Y_COORDS[$i]}" >> $GITHUB_ENV
+          done
 
       - name: Upload All Screenshots
         uses: actions/upload-artifact@v4
@@ -348,12 +360,25 @@ jobs:
           echo "Resolution: $RESOLUTION" >> "$STATUS_FILE"
           echo "Allow button clicked at: ($BUTTON_X, $BUTTON_Y)" >> "$STATUS_FILE"
           
-          # Add all click positions to status
-          for i in {1..5}; do
-            X_VAR="SCALED_X$i"
-            Y_VAR="SCALED_Y$i"
-            echo "Additional click $i at: (${!X_VAR}, ${!Y_VAR})" >> "$STATUS_FILE"
-          done
+          # Add all click positions to status using stored environment variables
+          echo "Additional clicks performed:" >> "$STATUS_FILE"
+          
+          # Try to get click coordinates from environment variables
+          if [ -n "$CLICK_COUNT" ]; then
+            for i in $(seq 1 $CLICK_COUNT); do
+              X_VAR="CLICK_${i}_X"
+              Y_VAR="CLICK_${i}_Y"
+              CLICK_X=${!X_VAR}
+              CLICK_Y=${!Y_VAR}
+              if [ -n "$CLICK_X" ] && [ -n "$CLICK_Y" ]; then
+                echo "  Click $i at: ($CLICK_X, $CLICK_Y)" >> "$STATUS_FILE"
+              else
+                echo "  Click $i: Coordinates not available" >> "$STATUS_FILE"
+              fi
+            done
+          else
+            echo "  Click coordinates: Not recorded" >> "$STATUS_FILE"
+          fi
           
           echo "Start time: $(date)" >> "$STATUS_FILE"
           echo "" >> "$STATUS_FILE"
