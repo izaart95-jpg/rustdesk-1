@@ -15,18 +15,31 @@ jobs:
           sw_vers
           echo "RUNNER_OS=$RUNNER_OS" >> $GITHUB_ENV
 
-      - name: Create Screenshot Directory
+      - name: Create Workspace Directory
         run: |
-          echo "=== Creating Screenshot Directory ==="
-          mkdir -p screenshots
-          echo "SCREENSHOT_DIR=$(pwd)/screenshots" >> $GITHUB_ENV
+          echo "=== Setting up workspace ==="
+          echo "Current directory: $(pwd)"
           
-          # Create metadata file
-          METADATA_FILE="$SCREENSHOT_DIR/test_metadata.txt"
+          # Create workspace directory
+          WORKSPACE_DIR="$(pwd)/workspace"
+          mkdir -p "$WORKSPACE_DIR"
+          
+          # Create screenshot directory
+          SCREENSHOT_DIR="$WORKSPACE_DIR/screenshots"
+          mkdir -p "$SCREENSHOT_DIR"
+          
+          echo "WORKSPACE_DIR=$WORKSPACE_DIR" >> $GITHUB_ENV
+          echo "SCREENSHOT_DIR=$SCREENSHOT_DIR" >> $GITHUB_ENV
+          
+          # Create metadata file in workspace
+          METADATA_FILE="$WORKSPACE_DIR/test_metadata.txt"
           echo "macOS Configuration Test" > "$METADATA_FILE"
           echo "======================" >> "$METADATA_FILE"
           echo "Date: $(date)" >> "$METADATA_FILE"
           echo "macOS Version: $(sw_vers -productVersion)" >> "$METADATA_FILE"
+          echo "Workspace: $WORKSPACE_DIR" >> "$METADATA_FILE"
+          
+          echo "✅ Workspace created: $WORKSPACE_DIR"
 
       - name: Initial Screenshot (Clean Desktop)
         run: |
@@ -69,15 +82,11 @@ jobs:
           
           # Verify user creation
           echo "Verifying user creation..."
-          id Hamiya || echo "User not found"
+          id Hamiya 2>/dev/null || echo "User not found"
           
           # Check admin group membership
           echo "Checking admin group membership..."
-          dscl . read /Groups/admin GroupMembership || echo "Could not read admin group"
-          
-          # Try to list users
-          echo "List of users:"
-          dscl . list /Users | grep -v '_' || echo "Could not list users"
+          dscl . read /Groups/admin GroupMembership 2>/dev/null || echo "Could not read admin group"
           
           echo "✅ User creation and admin assignment completed"
 
@@ -184,11 +193,7 @@ jobs:
           # Type "Fast User Switching" in search
           echo "Typing 'Fast User Switching' in search..."
           
-          # First click in search field (common location - top right)
-          # Different macOS versions have different search locations
-          # Let's try a few common approaches
-          
-          # Method 1: Use AppleScript to search
+          # Use AppleScript to search
           echo "Attempting search via AppleScript..."
           
           osascript <<'EOF' 2>&1 || echo "AppleScript search attempted"
@@ -197,9 +202,8 @@ jobs:
               activate
               delay 1
               
-              -- Try to find search field
+              -- Try keyboard shortcut for search (Cmd+F)
               try
-                -- Press Cmd+F for search (universal shortcut)
                 keystroke "f" using {command down}
                 delay 1
                 
@@ -211,23 +215,9 @@ jobs:
                 key code 36
                 delay 2
                 
-                log "Search completed via keyboard shortcuts"
+                log "Search completed via Cmd+F"
               on error errMsg
-                log "Keyboard shortcut method failed: " & errMsg
-                
-                -- Alternative: Try clicking common search locations
-                try
-                  -- Click in potential search field location (varies by macOS version)
-                  click at {900, 80}
-                  delay 1
-                  keystroke "Fast User Switching"
-                  delay 2
-                  key code 36
-                  delay 2
-                  log "Search completed via click and type"
-                on error errMsg2
-                  log "Click method also failed: " & errMsg2
-                end try
+                log "Cmd+F method failed: " & errMsg
               end try
             end tell
           end tell
@@ -294,7 +284,7 @@ jobs:
         run: |
           echo "=== Capturing Configuration Information ==="
           
-          INFO_FILE="$SCREENSHOT_DIR/configuration_info.txt"
+          INFO_FILE="$WORKSPACE_DIR/configuration_info.txt"
           
           echo "macOS Configuration Test Report" > "$INFO_FILE"
           echo "==============================" >> "$INFO_FILE"
@@ -304,13 +294,16 @@ jobs:
           
           echo "Login Window Configuration:" >> "$INFO_FILE"
           echo "---------------------------" >> "$INFO_FILE"
-          sudo defaults read /Library/Preferences/com.apple.loginwindow MultipleSessionEnabled 2>/dev/null >> "$INFO_FILE" || echo "MultipleSessionEnabled: Not set" >> "$INFO_FILE"
-          sudo defaults read /Library/Preferences/com.apple.loginwindow MultipleSessionName 2>/dev/null >> "$INFO_FILE" || echo "MultipleSessionName: Not set" >> "$INFO_FILE"
+          echo "MultipleSessionEnabled:" >> "$INFO_FILE"
+          sudo defaults read /Library/Preferences/com.apple.loginwindow MultipleSessionEnabled 2>/dev/null >> "$INFO_FILE" || echo "Not set" >> "$INFO_FILE"
+          echo "" >> "$INFO_FILE"
+          echo "MultipleSessionName:" >> "$INFO_FILE"
+          sudo defaults read /Library/Preferences/com.apple.loginwindow MultipleSessionName 2>/dev/null >> "$INFO_FILE" || echo "Not set" >> "$INFO_FILE"
           echo "" >> "$INFO_FILE"
           
           echo "User Information:" >> "$INFO_FILE"
           echo "-----------------" >> "$INFO_FILE"
-          echo "Checking user 'Hamiya':" >> "$INFO_FILE"
+          echo "User 'Hamiya':" >> "$INFO_FILE"
           id Hamiya 2>/dev/null >> "$INFO_FILE" || echo "User 'Hamiya' not found" >> "$INFO_FILE"
           echo "" >> "$INFO_FILE"
           
@@ -334,6 +327,8 @@ jobs:
           echo "--------------------" >> "$INFO_FILE"
           find "$SCREENSHOT_DIR" -name "*.png" -exec basename {} \; | sort >> "$INFO_FILE"
           
+          echo "Total screenshots: $(find "$SCREENSHOT_DIR" -name "*.png" | wc -l)" >> "$INFO_FILE"
+          
           echo "✅ Configuration info saved"
 
       - name: Upload All Screenshots
@@ -343,14 +338,14 @@ jobs:
           path: ${{ env.SCREENSHOT_DIR }}
           retention-days: 7
 
-      - name: Upload Configuration Report
+      - name: Upload Configuration Reports
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: macos-config-report
+          name: macos-config-reports
           path: |
-            ${{ env.SCREENSHOT_DIR }}/configuration_info.txt
-            ${{ env.SCREENSHOT_DIR }}/test_metadata.txt
+            ${{ env.WORKSPACE_DIR }}/configuration_info.txt
+            ${{ env.WORKSPACE_DIR }}/test_metadata.txt
           retention-days: 7
 
       - name: Final Summary
@@ -367,8 +362,8 @@ jobs:
           echo "  ✅ UI automation with clicks at specific coordinates"
           echo ""
           echo "📁 Artifacts:"
-          echo "  • All screenshots uploaded as 'macos-config-screenshots'"
-          echo "  • Configuration report uploaded as 'macos-config-report'"
+          echo "  • Screenshots uploaded as 'macos-config-screenshots'"
+          echo "  • Configuration reports uploaded as 'macos-config-reports'"
           echo ""
           echo "🔧 Configuration Applied:"
           echo "  • MultipleSessionEnabled: true"
