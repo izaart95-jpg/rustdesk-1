@@ -1,217 +1,449 @@
-name: Rustdesk with Sunshine
+name: RustDesk with Screen Recording Permission
 
 on:
   workflow_dispatch:
 
-env:
-  SSHX_SESSION_FILE: /tmp/sshx_session.log
-  SSHX_PID: 0
-
 jobs:
-  setup-sshx:
-    runs-on: ubuntu-latest
-    timeout-minutes: 360  # 6 hours total
+  rustdesk-screenshots:
+    runs-on: macos-latest
+    timeout-minutes: 45
 
     steps:
-      - name: Install dependencies
+      - name: Install RustDesk via Homebrew
         run: |
-          echo "=== Installing basic dependencies ==="
-          sudo apt-get update
-          sudo apt-get install -y curl wget ubuntu-desktop dbus-x11
-          echo "✅ Dependencies installed"
+          echo "=== Installing RustDesk via Homebrew ==="
+          
+          if ! command -v brew &> /dev/null; then
+            echo "Installing Homebrew..."
+            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+            echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zshrc
+            eval "$(/opt/homebrew/bin/brew shellenv)"
+          fi
+          
+          brew install --cask rustdesk
+          echo "✅ RustDesk installed via Homebrew"
 
-      - name: Install sshx and show URL
+      - name: Get Exact Display Resolution
         run: |
-          echo "=== Installing sshx ==="
-          curl -sSf https://sshx.io/get | sh
+          echo "=== Getting Exact Display Resolution ==="
           
-          echo ""
-          echo "=== Starting sshx session ==="
+          # Clean method to get resolution
+          RESOLUTION=$(osascript -e 'tell application "Finder" to get bounds of window of desktop' 2>/dev/null | awk -F', ' '{print $3 "x" $4}')
           
-          # Run sshx and capture output to file
-          sshx 2>&1 | tee "$SSHX_SESSION_FILE" &
-          SSHX_PID=$!
-          echo "SSHX_PID=$SSHX_PID" >> $GITHUB_ENV
+          if [ -z "$RESOLUTION" ] || [ "$RESOLUTION" = "0x0" ] || [ "$RESOLUTION" = "x" ]; then
+            # Try system_profiler with better parsing
+            RESOLUTION=$(system_profiler SPDisplaysDataType 2>/dev/null | grep -A1 "Resolution:" | tail -1 | tr -d ' ' | sed 's/[^0-9x]//g')
+          fi
           
-          # Wait for sshx to start
-          sleep 10
-          
-          # Check if sshx is running
-          if ps -p $SSHX_PID > /dev/null 2>&1; then
-            echo "✅ sshx running with PID: $SSHX_PID"
+          if [ -z "$RESOLUTION" ] || [ "$RESOLUTION" = "0x0" ] || [ "$RESOLUTION" = "x" ]; then
+            # Fallback to known GitHub Actions runner resolution
+            RESOLUTION="1024x768"
+            echo "⚠️ Using default GitHub Actions resolution: $RESOLUTION"
           else
-            echo "⚠️ sshx may have exited"
+            echo "Detected resolution: $RESOLUTION"
           fi
           
-          # Extract and show the sshx URL
-          echo ""
-          echo "=== SSHX Connection URL ==="
-          if [ -f "$SSHX_SESSION_FILE" ]; then
-            # Look for the sshx.io URL in the output
-            SSHX_URL=$(grep -o "https://sshx.io/[a-zA-Z0-9-]\+" "$SSHX_SESSION_FILE" | head -1 || true)
-            if [ ! -z "$SSHX_URL" ]; then
-              echo "🔗 Connect via: $SSHX_URL"
-              echo "SSHX_URL=$SSHX_URL" >> $GITHUB_ENV
-            else
-              echo "⚠️ Could not extract SSHX URL from logs"
-              echo "=== Last 10 lines of sshx output ==="
-              tail -10 "$SSHX_SESSION_FILE" || true
+          # Clean up the resolution string (remove commas, spaces, etc.)
+          RESOLUTION=$(echo "$RESOLUTION" | tr -d ',' | tr -d ' ')
+          
+          # Parse width and height safely
+          WIDTH=$(echo "$RESOLUTION" | cut -d'x' -f1)
+          HEIGHT=$(echo "$RESOLUTION" | cut -d'x' -f2)
+          
+          # Verify we got valid numbers
+          if ! [[ "$WIDTH" =~ ^[0-9]+$ ]] || ! [[ "$HEIGHT" =~ ^[0-9]+$ ]]; then
+            echo "⚠️ Invalid resolution detected, using defaults"
+            WIDTH="1024"
+            HEIGHT="768"
+            RESOLUTION="${WIDTH}x${HEIGHT}"
+          fi
+          
+          echo "Width: $WIDTH px"
+          echo "Height: $HEIGHT px"
+          
+          echo "RESOLUTION=$RESOLUTION" >> $GITHUB_ENV
+          echo "SCREEN_WIDTH=$WIDTH" >> $GITHUB_ENV
+          echo "SCREEN_HEIGHT=$HEIGHT" >> $GITHUB_ENV
+          
+          mkdir -p screenshots
+          echo "SCREENSHOT_DIR=$(pwd)/screenshots" >> $GITHUB_ENV
+
+      - name: Start RustDesk and Wait for Permission Prompt
+        run: |
+          echo "=== Starting RustDesk ==="
+          
+          # Launch RustDesk
+          open -a /Applications/RustDesk.app
+          
+          echo "Waiting for RustDesk to start and permission prompt to appear..."
+          echo "This may take 10-15 seconds..."
+          
+          # Wait for RustDesk process
+          for i in {1..30}; do
+            if pgrep -f "RustDesk" > /dev/null; then
+              echo "✅ RustDesk process found (attempt $i)"
+              break
             fi
-          fi
-
-      - name: Install Ubuntu Desktop and VNC
-        run: |
-          echo "=== Installing Ubuntu Desktop and VNC ==="
+            sleep 1
+          done
           
-          # Install required packages
-          sudo apt-get update
-          sudo apt-get install -y \
-            ubuntu-desktop \
-            tigervnc-standalone-server \
-            dbus-x11
-            
-          echo "✅ Ubuntu Desktop and VNC installed"
-
-      - name: Install Tailscale
-        run: |
-          echo "=== Installing Tailscale ==="
-          
-          # Install Tailscale
-          curl -fsSL https://tailscale.com/install.sh | sh
-          
-          # Start Tailscale with auth key
-          sudo tailscale up --auth-key "tskey-auth-katBTfGaCP11CNTRL-hMqSUZh4fgPZNHebqNt7gPCxLc3sP2pf" --hostname "github-runner-$(date +%s)" &
-          
-          echo "✅ Tailscale installed and connecting in background"
-          
-          # Wait a bit for connection
+          # Additional wait for permission dialog
           sleep 15
           
-          # Show Tailscale status
-          echo "=== Tailscale Status ==="
-          sudo tailscale status || true
+          echo "RustDesk should be running now"
+          echo "Permission prompt should appear..."
 
- 
-
-      - name: Keep SSHX alive for 6 hours
+      - name: Take Initial Screenshot (Before Click)
         run: |
-          echo "=== SSHX Remote Access Active ==="
-          echo ""
-          echo "Start time: $(date)"
-          echo "Will keep alive until: $(date -d '+6 hours')"
-          echo ""
+          echo "=== Taking Initial Screenshot (Before Permission Grant) ==="
           
-          # Display SSHX connection info
-          if [ -f "$SSHX_SESSION_FILE" ]; then
-            echo "=== SSHX Session Information ==="
-            SSHX_URL=$(grep -o "https://sshx.io/[a-zA-Z0-9-]\+" "$SSHX_SESSION_FILE" | head -1 || true)
-            if [ ! -z "$SSHX_URL" ]; then
-              echo "🔗 SSHX Connection URL: $SSHX_URL"
-            else
-              echo "⚠️ SSHX URL not found in logs"
-            fi
-            echo ""
+          timestamp=$(date +%Y%m%d_%H%M%S)
+          before_file="$SCREENSHOT_DIR/before_permission_$timestamp.png"
+          
+          screencapture -x "$before_file"
+          
+          if [ -f "$before_file" ]; then
+            filesize=$(ls -lh "$before_file" | awk '{print $5}')
+            echo "✅ Initial screenshot saved: $before_file ($filesize)"
+          else
+            echo "⚠️ Failed to take initial screenshot"
+          fi
+
+      - name: Calculate Button Position
+        run: |
+          echo "=== Calculating Button Position ==="
+          
+          # GitHub Actions runner resolution (from your screenshots)
+          ORIGINAL_WIDTH=1024
+          ORIGINAL_HEIGHT=768
+          ORIGINAL_X=462
+          ORIGINAL_Y=374
+          
+          echo "Original resolution: ${ORIGINAL_WIDTH}x${ORIGINAL_HEIGHT}"
+          echo "Current resolution: ${SCREEN_WIDTH}x${SCREEN_HEIGHT}"
+          echo "Original button position: (${ORIGINAL_X}, ${ORIGINAL_Y})"
+          
+          # Calculate scaling factors using bc for precision
+          X_SCALE=$(echo "scale=2; $SCREEN_WIDTH / $ORIGINAL_WIDTH" | bc)
+          Y_SCALE=$(echo "scale=2; $SCREEN_HEIGHT / $ORIGINAL_HEIGHT" | bc)
+          
+          echo "Scaling factors: X=${X_SCALE}, Y=${Y_SCALE}"
+          
+          # Calculate new coordinates (round to nearest integer)
+          NEW_X=$(echo "$ORIGINAL_X * $X_SCALE" | bc | awk '{printf "%.0f", $1}')
+          NEW_Y=$(echo "$ORIGINAL_Y * $Y_SCALE" | bc | awk '{printf "%.0f", $1}')
+          
+          # Ensure coordinates are within screen bounds
+          if [ $NEW_X -lt 0 ]; then NEW_X=0; fi
+          if [ $NEW_X -gt $SCREEN_WIDTH ]; then NEW_X=$((SCREEN_WIDTH - 10)); fi
+          if [ $NEW_Y -lt 0 ]; then NEW_Y=0; fi
+          if [ $NEW_Y -gt $SCREEN_HEIGHT ]; then NEW_Y=$((SCREEN_HEIGHT - 10)); fi
+          
+          echo "Calculated button position: (${NEW_X}, ${NEW_Y})"
+          
+          echo "BUTTON_X=$NEW_X" >> $GITHUB_ENV
+          echo "BUTTON_Y=$NEW_Y" >> $GITHUB_ENV
+
+      - name: Click Allow Button (Fixed)
+        run: |
+          echo "=== Clicking Allow Button ==="
+          echo "Clicking at coordinates: ($BUTTON_X, $BUTTON_Y)"
+          
+          # Install cliclick for precise clicking
+          if ! command -v cliclick &> /dev/null; then
+            echo "Installing cliclick..."
+            brew install cliclick
           fi
           
-          # Display Tailscale IP if connected
-          echo "=== Tailscale Status ==="
-          sudo tailscale ip 2>/dev/null | head -1 | while read ip; do
-            echo "🌐 Tailscale IP: $ip"
-          done || echo "Tailscale IP not available"
-          echo ""
+          # First, let's see what's on screen
+          echo "Taking screenshot before click..."
+          debug_before="$SCREENSHOT_DIR/debug_before_click_$(date +%H%M%S).png"
+          screencapture -x "$debug_before"
           
-          # Display Sunshine info
-          echo "=== Sunshine Information ==="
-          echo "🌞 Sunshine Web Interface: http://localhost:47990"
-          echo "🌞 Sunshine Streaming Port: 47989"
-          echo "🌞 Default credentials:"
-          echo "    Username: sunshine"
-          echo "    Password: sunshine"
-          echo ""
+          # Click the Allow button using cliclick (most reliable)
+          echo "Clicking the button with cliclick..."
+          cliclick c:$BUTTON_X,$BUTTON_Y
           
-          # Keep alive for 6 hours (360 minutes)
-          TOTAL_MINUTES=360
-          for minute in $(seq 1 $TOTAL_MINUTES); do
-            echo "=== Minute $minute/$TOTAL_MINUTES ==="
-            echo "Time: $(date)"
-            echo "Elapsed: $((minute / 60))h $((minute % 60))m"
-            echo "Remaining: $(((TOTAL_MINUTES - minute) / 60))h $(((TOTAL_MINUTES - minute) % 60))m"
+          echo "✅ Click performed"
+          
+          # Wait for dialog to close
+          sleep 3
+          
+          # Take screenshot after click
+          echo "Taking screenshot after click..."
+          debug_after="$SCREENSHOT_DIR/debug_after_click_$(date +%H%M%S).png"
+          screencapture -x "$debug_after"
+          
+          # Alternative AppleScript method (fixed syntax)
+          echo "Trying AppleScript alternative..."
+          /usr/bin/osascript <<EOF
+          tell application "System Events"
+            delay 0.5
+            set xPos to $BUTTON_X
+            set yPos to $BUTTON_Y
+            click at {xPos, yPos}
+          end tell
+          EOF
+          
+          # Grant permissions via tccutil if possible
+          echo "Attempting to grant screen recording permission via TCC..."
+          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" "INSERT OR REPLACE INTO access VALUES('kTCCServiceScreenRecording','com.carriez.rustdesk',0,1,1,NULL,NULL,NULL,'UNUSED',NULL,0,UNIXEPOCH());" 2>/dev/null || echo "Note: May not have permission to modify TCC database"
+          
+          # Also try tccutil command
+          echo "Attempting tccutil command..."
+          sudo tccutil reset ScreenRecording com.carriez.rustdesk 2>/dev/null || true
+          
+          echo "✅ All click methods attempted"
+
+      - name: Take Verification Screenshots (Reduced to 2)
+        run: |
+          echo "=== Taking Verification Screenshots (Reduced to 2) ==="
+          
+          # Wait a bit for RustDesk to initialize
+          sleep 5
+          
+          # Take 2 verification screenshots (reduced from 5)
+          for i in {1..2}; do
+            echo ""
+            echo "📸 Taking verification screenshot $i/2..."
             
-            # Check if sshx is running
-            if [ ! -z "$SSHX_PID" ] && ps -p $SSHX_PID > /dev/null 2>&1; then
-              echo "✅ sshx: Running (PID: $SSHX_PID)"
+            timestamp=$(date +%Y%m%d_%H%M%S)
+            filepath="$SCREENSHOT_DIR/verification_${i}_${timestamp}.png"
+            
+            screencapture -x "$filepath"
+            
+            if [ -f "$filepath" ]; then
+              filesize=$(ls -lh "$filepath" | awk '{print $5}')
+              echo "✅ Saved: $(basename $filepath) ($filesize)"
             else
-              echo "❌ sshx: Not running, attempting to restart..."
-              # Kill any remaining sshx processes
-              pkill -f "sshx" 2>/dev/null || true
+              echo "⚠️ Failed to take screenshot $i"
+            fi
+            
+            if [ $i -lt 2 ]; then
+              echo "   Waiting 2 seconds..."
               sleep 2
-              # Restart sshx
-              sshx 2>&1 | tee -a "$SSHX_SESSION_FILE" &
-              SSHX_PID=$!
-              echo "New PID: $SSHX_PID"
-              echo "SSHX_PID=$SSHX_PID" >> $GITHUB_ENV
-              sleep 10
-            fi
-            
-            # Check other services every 5 minutes
-            if [ $((minute % 5)) -eq 0 ]; then
-              echo "=== Service Status Check ==="
-              
-              # Check Tailscale
-              if sudo tailscale status 2>/dev/null | grep -q "active"; then
-                echo "✅ Tailscale: Connected"
-                # Show Tailscale IP
-                TAILSCALE_IP=$(sudo tailscale ip 2>/dev/null | head -1 || echo "")
-                if [ ! -z "$TAILSCALE_IP" ]; then
-                  echo "   IP Address: $TAILSCALE_IP"
-                  echo "   Sunshine via Tailscale: http://$TAILSCALE_IP:47990"
-                fi
-              else
-                echo "⚠️ Tailscale: Not connected, attempting restart..."
-                sudo tailscale up --auth-key "tskey-auth-katBTfGaCP11CNTRL-hMqSUZh4fgPZNHebqNt7gPCxLc3sP2pf" --reset || true
-              fi
-              
-              # Check Sunshine
-              if sudo systemctl is-active --quiet sunshine; then
-                echo "✅ Sunshine: Running"
-              else
-                echo "❌ Sunshine: Not running, attempting restart..."
-                
-              fi
-            fi
-            
-            # Wait for next minute
-            if [ $minute -lt $TOTAL_MINUTES ]; then
-              echo "⏳ Waiting 60 seconds..."
-              sleep 60
             fi
           done
           
+          # List all screenshots
           echo ""
-          echo "✅ 6 hours complete. Session ending."
+          echo "=== All Screenshots So Far ==="
+          ls -la "$SCREENSHOT_DIR/" 2>/dev/null | head -15
 
-      - name: Cleanup
-        if: always()
+      - name: Additional UI Clicks (Extended Addon)
         run: |
-          echo "=== Cleaning up ==="
+          echo "=== Performing Additional UI Clicks (Extended) ==="
           
-          # Kill sshx process
-          if [ ! -z "$SSHX_PID" ] && ps -p $SSHX_PID > /dev/null 2>&1; then
-            echo "Stopping sshx (PID: $SSHX_PID)..."
-            kill $SSHX_PID 2>/dev/null || true
-            sleep 2
+          # Calculate scaled coordinates for your requested clicks
+          # Original coordinates at 1024x768:
+          # 1: (210, 563), 2: (542, 293), 3: (820, 316), 4: (828, 313), 5: (543, 478)
+          
+          ORIGINAL_WIDTH=1024
+          ORIGINAL_HEIGHT=768
+          
+          # All click coordinates
+          ORIG_COORDS="210 563;542 293;820 316;828 313;543 478"
+          
+          echo "Original coordinates at ${ORIGINAL_WIDTH}x${ORIGINAL_HEIGHT}:"
+          
+          # Calculate scaling factors
+          X_SCALE=$(echo "scale=2; $SCREEN_WIDTH / $ORIGINAL_WIDTH" | bc)
+          Y_SCALE=$(echo "scale=2; $SCREEN_HEIGHT / $ORIGINAL_HEIGHT" | bc)
+          
+          # Process all coordinates
+          I=1
+          echo "$ORIG_COORDS" | tr ';' '\n' | while read -r coords; do
+            ORIG_X=$(echo "$coords" | awk '{print $1}')
+            ORIG_Y=$(echo "$coords" | awk '{print $2}')
+            
+            # Calculate scaled coordinates
+            SCALED_X=$(echo "$ORIG_X * $X_SCALE" | bc | awk '{printf "%.0f", $1}')
+            SCALED_Y=$(echo "$ORIG_Y * $Y_SCALE" | bc | awk '{printf "%.0f", $1}')
+            
+            echo "  Click $I: ($ORIG_X, $ORIG_Y) → ($SCALED_X, $SCALED_Y)"
+            
+            # Store in environment variables
+            echo "SCALED_X${I}=$SCALED_X" >> $GITHUB_ENV
+            echo "SCALED_Y${I}=$SCALED_Y" >> $GITHUB_ENV
+            
+            I=$((I + 1))
+          done
+          
+          echo ""
+          echo "Scaled coordinates at ${SCREEN_WIDTH}x${SCREEN_HEIGHT}:"
+          for i in {1..5}; do
+            var_x="SCALED_X$i"
+            var_y="SCALED_Y$i"
+            echo "  Click $i: (${!var_x}, ${!var_y})"
+          done
+          
+          # Ensure cliclick is installed
+          if ! command -v cliclick &> /dev/null; then
+            echo "Installing cliclick..."
+            brew install cliclick
           fi
           
-          # Kill any other sshx processes
-          pkill -f "sshx" 2>/dev/null || true
+          # Perform all 5 clicks
+          for i in {1..5}; do
+            var_x="SCALED_X$i"
+            var_y="SCALED_Y$i"
+            X_COORD=${!var_x}
+            Y_COORD=${!var_y}
+            
+            echo ""
+            echo "🔘 Performing click $i at ($X_COORD, $Y_COORD)..."
+            cliclick c:$X_COORD,$Y_COORD
+            echo "✅ Click $i completed"
+            
+            # Wait 2 seconds between clicks (except after last)
+            if [ $i -lt 5 ]; then
+              echo "⏳ Waiting 2 seconds..."
+              sleep 2
+            fi
+          done
           
-          # Kill Sunshine
-          echo "Stopping Sunshine..."
-          sudo systemctl stop sunshine 2>/dev/null || true
-          pkill -f "sunshine" 2>/dev/null || true
+          # Wait 2 seconds after last click as requested
+          echo ""
+          echo "⏳ Waiting 2 seconds after final click..."
+          sleep 2
           
-          # Stop Tailscale
-          echo "Stopping Tailscale..."
-          sudo tailscale down 2>/dev/null || true
+          # Take screenshot after all additional clicks
+          echo ""
+          echo "📸 Taking screenshot after all additional clicks..."
+          addon_file="$SCREENSHOT_DIR/addon_after_5clicks_$(date +%Y%m%d_%H%M%S).png"
+          screencapture -x "$addon_file"
+          
+          if [ -f "$addon_file" ]; then
+            filesize=$(ls -lh "$addon_file" | awk '{print $5}')
+            echo "✅ Addon screenshot saved: $(basename $addon_file) ($filesize)"
+          else
+            echo "⚠️ Failed to take addon screenshot"
+          fi
+          
+          echo "=== Extended UI Clicks Completed ==="
+
+      - name: Upload All Screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustdesk-permission-screenshots
+          path: ${{ env.SCREENSHOT_DIR }}
+          retention-days: 1
+
+      - name: Keep System Running for 20 Minutes
+        run: |
+          echo "=== Keeping System Running for 20 Minutes ==="
+          echo "Start time: $(date)"
+          echo "End time: $(date -v+20M)"
+          echo ""
+          echo "RustDesk should be working with screen recording permission"
+          echo "If the Allow button was clicked successfully, RustDesk should be functional"
+          echo ""
+          
+          # Create status file
+          STATUS_FILE="$SCREENSHOT_DIR/rustdesk_status.txt"
+          echo "RustDesk 20-Minute Monitoring Log" > "$STATUS_FILE"
+          echo "=================================" >> "$STATUS_FILE"
+          echo "Resolution: $RESOLUTION" >> "$STATUS_FILE"
+          echo "Allow button clicked at: ($BUTTON_X, $BUTTON_Y)" >> "$STATUS_FILE"
+          
+          # Log all additional clicks
+          for i in {1..5}; do
+            var_x="SCALED_X$i"
+            var_y="SCALED_Y$i"
+            echo "Additional click $i at: (${!var_x}, ${!var_y})" >> "$STATUS_FILE"
+          done
+          
+          echo "Start time: $(date)" >> "$STATUS_FILE"
+          echo "" >> "$STATUS_FILE"
+          
+          # Run for 20 minutes
+          for minute in {1..20}; do
+            current_time=$(date '+%H:%M:%S')
+            echo "[$current_time] Minute $minute/20"
+            echo "[$current_time] Minute $minute/20" >> "$STATUS_FILE"
+            
+            # Check RustDesk status
+            if pgrep -f "RustDesk" > /dev/null; then
+              echo "  ✅ RustDesk: Running"
+              echo "  RustDesk: Running" >> "$STATUS_FILE"
+              
+              # Take screenshot every 4 minutes
+              if [ $((minute % 4)) -eq 0 ]; then
+                runtime_file="$SCREENSHOT_DIR/runtime_${minute}min_$(date +%H%M%S).png"
+                if screencapture -x "$runtime_file" 2>/dev/null; then
+                  echo "  📸 Runtime screenshot taken"
+                  echo "  Screenshot at minute $minute" >> "$STATUS_FILE"
+                fi
+              fi
+            else
+              echo "  ⚠️ RustDesk: Not running"
+              echo "  RustDesk: Not running at minute $minute" >> "$STATUS_FILE"
+              
+              # Try to restart every 5 minutes if not running
+              if [ $((minute % 5)) -eq 0 ]; then
+                echo "  Attempting to restart RustDesk..."
+                open -a /Applications/RustDesk.app 2>/dev/null || true
+                echo "  RustDesk restart attempted" >> "$STATUS_FILE"
+              fi
+            fi
+            
+            # Display RustDesk window info occasionally
+            if [ $((minute % 3)) -eq 0 ]; then
+              echo "  Checking window state..."
+              window_info=$(osascript <<'EOF' 2>/dev/null || echo "Window check failed")
+              tell application "System Events"
+                try
+                  tell process "RustDesk"
+                    set windowCount to count of windows
+                    return "  Windows: " & windowCount
+                  end tell
+                on error
+                  return "  RustDesk window check failed"
+                end try
+              end tell
+              EOF
+              echo "$window_info"
+              echo "$window_info" >> "$STATUS_FILE"
+            fi
+            
+            echo "  Waiting 1 minute..."
+            echo "" >> "$STATUS_FILE"
+            sleep 60
+          done
+          
+          echo ""
+          echo "✅ 20-minute runtime completed at $(date)"
+          echo "End time: $(date)" >> "$STATUS_FILE"
+          
+          # Final status
+          echo ""
+          echo "=== Final Status ==="
+          echo "Total screenshots: $(find "$SCREENSHOT_DIR" -name "*.png" 2>/dev/null | wc -l)"
+          echo "RustDesk running: $(pgrep -f "RustDesk" > /dev/null && echo "Yes" || echo "No")"
+
+      - name: Upload Final Status
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rustdesk-final-status
+          path: |
+            ${{ env.SCREENSHOT_DIR }}/rustdesk_status.txt
+            ${{ env.SCREENSHOT_DIR }}
+          retention-days: 1
+
+      - name: Final Cleanup
+        if: always()
+        run: |
+          echo "=== Final Cleanup ==="
+          
+          # Final screenshot
+          final_file="$SCREENSHOT_DIR/final_complete_$(date +%H%M%S).png"
+          screencapture -x "$final_file" 2>/dev/null && echo "✅ Final screenshot taken" || echo "⚠️ Could not take final screenshot"
+          
+          # Stop RustDesk
+          pkill -f "RustDesk" 2>/dev/null || true
+          sleep 2
           
           echo "✅ Cleanup complete"
+          echo "Total workflow time: ~25 minutes"
+          echo "Total screenshots captured: $(find "$SCREENSHOT_DIR" -name "*.png" 2>/dev/null | wc -l)"
