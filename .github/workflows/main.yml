@@ -27,320 +27,100 @@ jobs:
         run: |
           echo "=== Getting Exact Display Resolution ==="
           
-          # Clean method to get resolution
           RESOLUTION=$(osascript -e 'tell application "Finder" to get bounds of window of desktop' 2>/dev/null | awk -F', ' '{print $3 "x" $4}')
           
-          if [ -z "$RESOLUTION" ] || [ "$RESOLUTION" = "0x0" ] || [ "$RESOLUTION" = "x" ]; then
-            # Try system_profiler with better parsing
+          if [ -z "$RESOLUTION" ] || [ "$RESOLUTION" = "0x0" ]; then
             RESOLUTION=$(system_profiler SPDisplaysDataType 2>/dev/null | grep -A1 "Resolution:" | tail -1 | tr -d ' ' | sed 's/[^0-9x]//g')
           fi
           
-          if [ -z "$RESOLUTION" ] || [ "$RESOLUTION" = "0x0" ] || [ "$RESOLUTION" = "x" ]; then
-            # Fallback to known GitHub Actions runner resolution
+          if [ -z "$RESOLUTION" ] || [ "$RESOLUTION" = "0x0" ]; then
             RESOLUTION="1024x768"
-            echo "⚠️ Using default GitHub Actions resolution: $RESOLUTION"
-          else
-            echo "Detected resolution: $RESOLUTION"
           fi
           
-          # Clean up the resolution string (remove commas, spaces, etc.)
           RESOLUTION=$(echo "$RESOLUTION" | tr -d ',' | tr -d ' ')
-          
-          # Parse width and height safely
           WIDTH=$(echo "$RESOLUTION" | cut -d'x' -f1)
           HEIGHT=$(echo "$RESOLUTION" | cut -d'x' -f2)
           
-          # Verify we got valid numbers
-          if ! [[ "$WIDTH" =~ ^[0-9]+$ ]] || ! [[ "$HEIGHT" =~ ^[0-9]+$ ]]; then
-            echo "⚠️ Invalid resolution detected, using defaults"
-            WIDTH="1024"
-            HEIGHT="768"
-            RESOLUTION="${WIDTH}x${HEIGHT}"
-          fi
-          
-          echo "Width: $WIDTH px"
-          echo "Height: $HEIGHT px"
+          if ! [[ "$WIDTH" =~ ^[0-9]+$ ]]; then WIDTH=1024; fi
+          if ! [[ "$HEIGHT" =~ ^[0-9]+$ ]]; then HEIGHT=768; fi
           
           echo "RESOLUTION=$RESOLUTION" >> $GITHUB_ENV
           echo "SCREEN_WIDTH=$WIDTH" >> $GITHUB_ENV
           echo "SCREEN_HEIGHT=$HEIGHT" >> $GITHUB_ENV
-          
+
           mkdir -p screenshots
           echo "SCREENSHOT_DIR=$(pwd)/screenshots" >> $GITHUB_ENV
 
       - name: Start RustDesk and Wait for Permission Prompt
         run: |
-          echo "=== Starting RustDesk ==="
-          
-          # Launch RustDesk
           open -a /Applications/RustDesk.app
-          
-          echo "Waiting for RustDesk to start and permission prompt to appear..."
-          echo "This may take 10-15 seconds..."
-          
-          # Wait for RustDesk process
           for i in {1..30}; do
-            if pgrep -f "RustDesk" > /dev/null; then
-              echo "✅ RustDesk process found (attempt $i)"
-              break
-            fi
+            if pgrep -f "RustDesk" > /dev/null; then break; fi
             sleep 1
           done
-          
-          # Additional wait for permission dialog
           sleep 15
-          
-          echo "RustDesk should be running now"
-          echo "Permission prompt should appear..."
 
       - name: Take Initial Screenshot (Before Click)
         run: |
-          echo "=== Taking Initial Screenshot (Before Permission Grant) ==="
-          
           timestamp=$(date +%Y%m%d_%H%M%S)
-          before_file="$SCREENSHOT_DIR/before_permission_$timestamp.png"
-          
-          screencapture -x "$before_file"
-          
-          if [ -f "$before_file" ]; then
-            filesize=$(ls -lh "$before_file" | awk '{print $5}')
-            echo "✅ Initial screenshot saved: $before_file ($filesize)"
-          else
-            echo "⚠️ Failed to take initial screenshot"
-          fi
+          screencapture -x "$SCREENSHOT_DIR/before_$timestamp.png"
 
       - name: Calculate Button Position
         run: |
-          echo "=== Calculating Button Position ==="
-          
-          # GitHub Actions runner resolution (from your screenshots)
           ORIGINAL_WIDTH=1024
           ORIGINAL_HEIGHT=768
           ORIGINAL_X=462
           ORIGINAL_Y=374
-          
-          echo "Original resolution: ${ORIGINAL_WIDTH}x${ORIGINAL_HEIGHT}"
-          echo "Current resolution: ${SCREEN_WIDTH}x${SCREEN_HEIGHT}"
-          echo "Original button position: (${ORIGINAL_X}, ${ORIGINAL_Y})"
-          
-          # Calculate scaling factors using bc for precision
+
           X_SCALE=$(echo "scale=2; $SCREEN_WIDTH / $ORIGINAL_WIDTH" | bc)
           Y_SCALE=$(echo "scale=2; $SCREEN_HEIGHT / $ORIGINAL_HEIGHT" | bc)
-          
-          echo "Scaling factors: X=${X_SCALE}, Y=${Y_SCALE}"
-          
-          # Calculate new coordinates (round to nearest integer)
-          NEW_X=$(echo "$ORIGINAL_X * $X_SCALE" | bc | awk '{printf "%.0f", $1}')
-          NEW_Y=$(echo "$ORIGINAL_Y * $Y_SCALE" | bc | awk '{printf "%.0f", $1}')
-          
-          # Ensure coordinates are within screen bounds
-          if [ $NEW_X -lt 0 ]; then NEW_X=0; fi
-          if [ $NEW_X -gt $SCREEN_WIDTH ]; then NEW_X=$((SCREEN_WIDTH - 10)); fi
-          if [ $NEW_Y -lt 0 ]; then NEW_Y=0; fi
-          if [ $NEW_Y -gt $SCREEN_HEIGHT ]; then NEW_Y=$((SCREEN_HEIGHT - 10)); fi
-          
-          echo "Calculated button position: (${NEW_X}, ${NEW_Y})"
-          
+
+          NEW_X=$(echo "$ORIGINAL_X * $X_SCALE" | bc | awk '{printf "%.0f"}')
+          NEW_Y=$(echo "$ORIGINAL_Y * $Y_SCALE" | bc | awk '{printf "%.0f"}')
+
           echo "BUTTON_X=$NEW_X" >> $GITHUB_ENV
           echo "BUTTON_Y=$NEW_Y" >> $GITHUB_ENV
 
-      - name: Click Allow Button (Fixed)
+      - name: Click Allow Button
         run: |
-          echo "=== Clicking Allow Button ==="
-          echo "Clicking at coordinates: ($BUTTON_X, $BUTTON_Y)"
-          
-          # Install cliclick for precise clicking
-          if ! command -v cliclick &> /dev/null; then
-            echo "Installing cliclick..."
-            brew install cliclick
-          fi
-          
-          # First, let's see what's on screen
-          echo "Taking screenshot before click..."
-          debug_before="$SCREENSHOT_DIR/debug_before_click_$(date +%H%M%S).png"
-          screencapture -x "$debug_before"
-          
-          # Click the Allow button using cliclick (most reliable)
-          echo "Clicking the button with cliclick..."
+          if ! command -v cliclick &> /dev/null; then brew install cliclick; fi
+
+          screencapture -x "$SCREENSHOT_DIR/debug_before_click.png"
           cliclick c:$BUTTON_X,$BUTTON_Y
-          
-          echo "✅ Click performed"
-          
-          # Wait for dialog to close
           sleep 3
-          
-          # Take screenshot after click
-          echo "Taking screenshot after click..."
-          debug_after="$SCREENSHOT_DIR/debug_after_click_$(date +%H%M%S).png"
-          screencapture -x "$debug_after"
-          
-          # Alternative AppleScript method (fixed syntax)
-          echo "Trying AppleScript alternative..."
-          /usr/bin/osascript <<EOF
-          tell application "System Events"
-            delay 0.5
-            set xPos to $BUTTON_X
-            set yPos to $BUTTON_Y
-            click at {xPos, yPos}
-          end tell
-          EOF
-          
-          # Grant permissions via tccutil if possible
-          echo "Attempting to grant screen recording permission via TCC..."
-          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" "INSERT OR REPLACE INTO access VALUES('kTCCServiceScreenRecording','com.carriez.rustdesk',0,1,1,NULL,NULL,NULL,'UNUSED',NULL,0,UNIXEPOCH());" 2>/dev/null || echo "Note: May not have permission to modify TCC database"
-          
-          # Also try tccutil command
-          echo "Attempting tccutil command..."
-          sudo tccutil reset ScreenRecording com.carriez.rustdesk 2>/dev/null || true
-          
-          echo "✅ All click methods attempted"
+          screencapture -x "$SCREENSHOT_DIR/debug_after_click.png"
 
-      - name: Take Verification Screenshots (Reduced to 2)
+          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
+            "INSERT OR REPLACE INTO access VALUES('kTCCServiceScreenRecording','com.carriez.rustdesk',0,1,1,NULL,NULL,NULL,'UNUSED',NULL,0,UNIXEPOCH());" || true
+
+      - name: Take Verification Screenshots
         run: |
-          echo "=== Taking Verification Screenshots (Reduced to 2) ==="
-          
-          # Wait a bit for RustDesk to initialize
-          sleep 5
-          
-          # Take 2 verification screenshots (reduced from 5)
           for i in {1..2}; do
-            echo ""
-            echo "📸 Taking verification screenshot $i/2..."
-            
             timestamp=$(date +%Y%m%d_%H%M%S)
-            filepath="$SCREENSHOT_DIR/verification_${i}_${timestamp}.png"
-            
-            screencapture -x "$filepath"
-            
-            if [ -f "$filepath" ]; then
-              filesize=$(ls -lh "$filepath" | awk '{print $5}')
-              echo "✅ Saved: $(basename $filepath) ($filesize)"
-            else
-              echo "⚠️ Failed to take screenshot $i"
-            fi
-            
-            if [ $i -lt 2 ]; then
-              echo "   Waiting 2 seconds..."
-              sleep 2
-            fi
+            screencapture -x "$SCREENSHOT_DIR/verify_${i}_$timestamp.png"
+            sleep 2
           done
-          
-          # List all screenshots
-          echo ""
-          echo "=== All Screenshots So Far ==="
-          ls -la "$SCREENSHOT_DIR/" 2>/dev/null | head -15
 
-      - name: Additional UI Clicks (Fixed - No Environment Variables)
+      - name: Additional UI Clicks (Extended – Fixed)
         run: |
-          echo "=== Performing Additional UI Clicks (Fixed) ==="
-          
-          # Calculate scaled coordinates for your requested clicks
-          # Original coordinates at 1024x768:
-          # 1: (210, 563), 2: (542, 293), 3: (820, 316), 4: (828, 313), 5: (543, 478)
-          
           ORIGINAL_WIDTH=1024
           ORIGINAL_HEIGHT=768
-          
-          # Store original coordinates
-          ORIG_COORDS=("210,563" "542,293" "820,316" "828,313" "543,478")
-          
-          echo "Original coordinates at ${ORIGINAL_WIDTH}x${ORIGINAL_HEIGHT}:"
-          
-          # Calculate scaling factors
-          X_SCALE=$(echo "scale=2; $SCREEN_WIDTH / $ORIGINAL_WIDTH" | bc)
-          Y_SCALE=$(echo "scale=2; $SCREEN_HEIGHT / $ORIGINAL_HEIGHT" | bc)
-          
-          echo "Scaling factors: X=${X_SCALE}, Y=${Y_SCALE}"
-          
-          # Calculate scaled coordinates
-          SCALED_COORDS=()
+          ORIG_X=(210 542 820 828 543)
+          ORIG_Y=(563 293 316 313 478)
+
+          X_SCALE=$(echo "scale=4; $SCREEN_WIDTH / $ORIGINAL_WIDTH" | bc)
+          Y_SCALE=$(echo "scale=4; $SCREEN_HEIGHT / $ORIGINAL_HEIGHT" | bc)
+
+          if ! command -v cliclick &> /dev/null; then brew install cliclick; fi
+
           for i in {0..4}; do
-            ORIG_X=$(echo "${ORIG_COORDS[$i]}" | cut -d',' -f1)
-            ORIG_Y=$(echo "${ORIG_COORDS[$i]}" | cut -d',' -f2)
-            
-            SCALED_X=$(echo "$ORIG_X * $X_SCALE" | bc | awk '{printf "%.0f", $1}')
-            SCALED_Y=$(echo "$ORIG_Y * $Y_SCALE" | bc | awk '{printf "%.0f", $1}')
-            
-            SCALED_COORDS[$i]="${SCALED_X},${SCALED_Y}"
-            
-            echo "  Click $((i+1)): ($ORIG_X, $ORIG_Y) → ($SCALED_X, $SCALED_Y)"
+            sx=$(echo "${ORIG_X[$i]} * $X_SCALE" | bc | awk '{printf "%.0f"}')
+            sy=$(echo "${ORIG_Y[$i]} * $Y_SCALE" | bc | awk '{printf "%.0f"}')
+            cliclick "c:$sx,$sy"
+            sleep 2
           done
-          
-          echo ""
-          echo "Scaled coordinates at ${SCREEN_WIDTH}x${SCREEN_HEIGHT}:"
-          for i in {0..4}; do
-            echo "  Click $((i+1)): (${SCALED_COORDS[$i]})"
-          done
-          
-          # Ensure cliclick is installed
-          if ! command -v cliclick &> /dev/null; then
-            echo "Installing cliclick..."
-            brew install cliclick
-          fi
-          
-          # Create coordinates file for monitoring step
-          COORDS_FILE="$SCREENSHOT_DIR/click_coordinates.txt"
-          echo "Additional Click Coordinates" > "$COORDS_FILE"
-          echo "============================" >> "$COORDS_FILE"
-          echo "Resolution: $RESOLUTION" >> "$COORDS_FILE"
-          
-          # Perform all 5 clicks
-          for i in {0..4}; do
-            X_COORD=$(echo "${SCALED_COORDS[$i]}" | cut -d',' -f1)
-            Y_COORD=$(echo "${SCALED_COORDS[$i]}" | cut -d',' -f2)
-            
-            echo "Click $((i+1)): ($X_COORD, $Y_COORD)" >> "$COORDS_FILE"
-            
-            echo ""
-            echo "🔘 Performing click $((i+1)) at ($X_COORD, $Y_COORD)..."
-            
-            # Try clicking with cliclick
-            if cliclick c:$X_COORD,$Y_COORD; then
-              echo "✅ Click $((i+1)) completed"
-            else
-              echo "⚠️ Click $((i+1)) failed, trying AppleScript..."
-              # Create AppleScript with proper syntax
-              APPLESCRIPT=$(cat <<APPLESCRIPT_EOF
-              tell application "System Events"
-                delay 0.1
-                click at {$X_COORD, $Y_COORD}
-              end tell
-APPLESCRIPT_EOF
-              )
-              echo "$APPLESCRIPT" | osascript
-              echo "✅ Click $((i+1)) attempted with AppleScript"
-            fi
-            
-            # Wait 2 seconds between clicks (except after last)
-            if [ $i -lt 4 ]; then
-              echo "⏳ Waiting 2 seconds..."
-              sleep 2
-            fi
-          done
-          
-          # Wait 2 seconds after last click as requested
-          echo ""
-          echo "⏳ Waiting 2 seconds after final click..."
-          sleep 2
-          
-          # Take screenshot after all additional clicks
-          echo ""
-          echo "📸 Taking screenshot after all additional clicks..."
-          addon_file="$SCREENSHOT_DIR/addon_after_5clicks_$(date +%Y%m%d_%H%M%S).png"
-          screencapture -x "$addon_file"
-          
-          if [ -f "$addon_file" ]; then
-            filesize=$(ls -lh "$addon_file" | awk '{print $5}')
-            echo "✅ Addon screenshot saved: $(basename $addon_file) ($filesize)"
-          else
-            echo "⚠️ Failed to take addon screenshot"
-          fi
-          
-          echo "=== Extended UI Clicks Completed ==="
-          
-          # Store coordinates as comma-separated string for monitoring step
-          SCALED_COORDS_STR="${SCALED_COORDS[0]};${SCALED_COORDS[1]};${SCALED_COORDS[2]};${SCALED_COORDS[3]};${SCALED_COORDS[4]}"
-          echo "SCALED_COORDS_STR=$SCALED_COORDS_STR" >> $GITHUB_ENV
+
+          screencapture -x "$SCREENSHOT_DIR/after_extended_clicks.png"
 
       - name: Upload All Screenshots
         uses: actions/upload-artifact@v4
@@ -351,101 +131,20 @@ APPLESCRIPT_EOF
 
       - name: Keep System Running for 20 Minutes
         run: |
-          echo "=== Keeping System Running for 20 Minutes ==="
-          echo "Start time: $(date)"
-          echo "End time: $(date -v+20M)"
-          echo ""
-          echo "RustDesk should be working with screen recording permission"
-          echo "If the Allow button was clicked successfully, RustDesk should be functional"
-          echo ""
-          
-          # Create status file
           STATUS_FILE="$SCREENSHOT_DIR/rustdesk_status.txt"
-          echo "RustDesk 20-Minute Monitoring Log" > "$STATUS_FILE"
-          echo "=================================" >> "$STATUS_FILE"
-          echo "Resolution: $RESOLUTION" >> "$STATUS_FILE"
-          echo "Allow button clicked at: ($BUTTON_X, $BUTTON_Y)" >> "$STATUS_FILE"
-          
-          # Read coordinates from file if exists
-          COORDS_FILE="$SCREENSHOT_DIR/click_coordinates.txt"
-          if [ -f "$COORDS_FILE" ]; then
-            echo "Additional clicks from coordinates file:" >> "$STATUS_FILE"
-            tail -n +3 "$COORDS_FILE" >> "$STATUS_FILE"
-          else
-            # Fallback to parsing the environment variable
-            IFS=';' read -ra COORDS <<< "$SCALED_COORDS_STR"
-            for i in "${!COORDS[@]}"; do
-              echo "Additional click $((i+1)) at: (${COORDS[$i]})" >> "$STATUS_FILE"
-            done
-          fi
-          
-          echo "Start time: $(date)" >> "$STATUS_FILE"
-          echo "" >> "$STATUS_FILE"
-          
-          # Run for 20 minutes
+          echo "Start" > "$STATUS_FILE"
+
           for minute in {1..20}; do
-            current_time=$(date '+%H:%M:%S')
-            echo "[$current_time] Minute $minute/20"
-            echo "[$current_time] Minute $minute/20" >> "$STATUS_FILE"
-            
-            # Check RustDesk status
             if pgrep -f "RustDesk" > /dev/null; then
-              echo "  ✅ RustDesk: Running"
-              echo "  RustDesk: Running" >> "$STATUS_FILE"
-              
-              # Take screenshot every 4 minutes
-              if [ $((minute % 4)) -eq 0 ]; then
-                runtime_file="$SCREENSHOT_DIR/runtime_${minute}min_$(date +%H%M%S).png"
-                if screencapture -x "$runtime_file" 2>/dev/null; then
-                  echo "  📸 Runtime screenshot taken"
-                  echo "  Screenshot at minute $minute" >> "$STATUS_FILE"
-                fi
-              fi
+              echo "RustDesk Running" >> "$STATUS_FILE"
             else
-              echo "  ⚠️ RustDesk: Not running"
-              echo "  RustDesk: Not running at minute $minute" >> "$STATUS_FILE"
-              
-              # Try to restart every 5 minutes if not running
+              echo "RustDesk NOT running" >> "$STATUS_FILE"
               if [ $((minute % 5)) -eq 0 ]; then
-                echo "  Attempting to restart RustDesk..."
-                open -a /Applications/RustDesk.app 2>/dev/null || true
-                echo "  RustDesk restart attempted" >> "$STATUS_FILE"
+                  open -a /Applications/RustDesk.app || true
               fi
             fi
-            
-            # Display RustDesk window info occasionally
-            if [ $((minute % 3)) -eq 0 ]; then
-              echo "  Checking window state..."
-              window_info=$(osascript <<'EOF' 2>/dev/null || echo "Window check failed")
-              tell application "System Events"
-                try
-                  tell process "RustDesk"
-                    set windowCount to count of windows
-                    return "  Windows: " & windowCount
-                  end tell
-                on error
-                  return "  RustDesk window check failed"
-                end try
-              end tell
-              EOF
-              echo "$window_info"
-              echo "$window_info" >> "$STATUS_FILE"
-            fi
-            
-            echo "  Waiting 1 minute..."
-            echo "" >> "$STATUS_FILE"
             sleep 60
           done
-          
-          echo ""
-          echo "✅ 20-minute runtime completed at $(date)"
-          echo "End time: $(date)" >> "$STATUS_FILE"
-          
-          # Final status
-          echo ""
-          echo "=== Final Status ==="
-          echo "Total screenshots: $(find "$SCREENSHOT_DIR" -name "*.png" 2>/dev/null | wc -l)"
-          echo "RustDesk running: $(pgrep -f "RustDesk" > /dev/null && echo "Yes" || echo "No")"
 
       - name: Upload Final Status
         uses: actions/upload-artifact@v4
@@ -460,16 +159,5 @@ APPLESCRIPT_EOF
       - name: Final Cleanup
         if: always()
         run: |
-          echo "=== Final Cleanup ==="
-          
-          # Final screenshot
-          final_file="$SCREENSHOT_DIR/final_complete_$(date +%H%M%S).png"
-          screencapture -x "$final_file" 2>/dev/null && echo "✅ Final screenshot taken" || echo "⚠️ Could not take final screenshot"
-          
-          # Stop RustDesk
-          pkill -f "RustDesk" 2>/dev/null || true
-          sleep 2
-          
-          echo "✅ Cleanup complete"
-          echo "Total workflow time: ~25 minutes"
-          echo "Total screenshots captured: $(find "$SCREENSHOT_DIR" -name "*.png" 2>/dev/null | wc -l)"
+          screencapture -x "$SCREENSHOT_DIR/final.png"
+          pkill -f "RustDesk" || true
