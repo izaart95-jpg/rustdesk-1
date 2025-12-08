@@ -146,20 +146,20 @@ jobs:
           # Create Sunshine config directory
           mkdir -p ~/.config/sunshine
           
-          # Create basic Sunshine config
-          SUNSHINE_CONFIG=~/.config/sunshine/sunshine.conf
-          
           # Get or generate default config
           echo "Generating Sunshine configuration..."
           
           # Try to get IP (use localhost if Tailscale not connected)
-          if [ -n "${{ env.TAILSCALE_IP }}" ] && [ "${{ env.TAILSCALE_IP }}" != "Not connected" ]; then
-            EXTERNAL_IP="${{ env.TAILSCALE_IP }}"
+          if [ -n "$TAILSCALE_IP" ] && [ "$TAILSCALE_IP" != "Not connected" ]; then
+            EXTERNAL_IP="$TAILSCALE_IP"
           else
             EXTERNAL_IP="127.0.0.1"
           fi
           
-          cat > "$SUNSHINE_CONFIG" << EOF
+          # Create basic Sunshine config
+          SUNSHINE_CONFIG=~/.config/sunshine/sunshine.conf
+          
+          cat > "$SUNSHINE_CONFIG" << 'EOF'
           # Sunshine Configuration
           # Generated for GitHub Actions test
           
@@ -178,8 +178,11 @@ jobs:
           
           # External access
           [external_ip]
-          address = $EXTERNAL_IP
+          address = EXTERNAL_IP_PLACEHOLDER
           EOF
+          
+          # Replace placeholder with actual IP
+          sed -i '' "s/EXTERNAL_IP_PLACEHOLDER/$EXTERNAL_IP/" "$SUNSHINE_CONFIG"
           
           echo "Sunshine configuration created at: $SUNSHINE_CONFIG"
           echo "Using external IP: $EXTERNAL_IP"
@@ -200,8 +203,7 @@ jobs:
           echo "Date: $(date)" >> "$METADATA_FILE"
           echo "macOS Version: $(sw_vers -productVersion)" >> "$METADATA_FILE"
           echo "Architecture: $(uname -m)" >> "$METADATA_FILE"
-          echo "Tailscale IP: ${{ env.TAILSCALE_IP }}" >> "$METADATA_FILE"
-          echo "External IP used: $EXTERNAL_IP" >> "$METADATA_FILE"
+          echo "Tailscale IP: $TAILSCALE_IP" >> "$METADATA_FILE"
           echo "" >> "$METADATA_FILE"
           
           echo "✅ Screenshot directory created at: $SCREENSHOT_DIR"
@@ -255,8 +257,7 @@ jobs:
             echo "Attempting to start Sunshine directly..."
             
             # Create startup script to run Sunshine with proper environment
-            STARTUP_SCRIPT="start_sunshine.sh"
-            cat > "$STARTUP_SCRIPT" << 'EOF'
+            cat > start_sunshine.sh << 'EOF'
             #!/bin/bash
             # Start Sunshine with proper environment
             export PATH="/opt/homebrew/bin:$PATH"
@@ -270,10 +271,10 @@ jobs:
             sunshine --creds 2>&1 | tee sunshine_output.log
             EOF
             
-            chmod +x "$STARTUP_SCRIPT"
+            chmod +x start_sunshine.sh
             
             # Start Sunshine in the background
-            nohup ./"$STARTUP_SCRIPT" > sunshine_nohup.log 2>&1 &
+            nohup ./start_sunshine.sh > sunshine_nohup.log 2>&1 &
             SUNSHINE_PID=$!
             echo "SUNSHINE_PID=$SUNSHINE_PID" >> $GITHUB_ENV
             sleep 5
@@ -282,7 +283,7 @@ jobs:
           # Wait for Sunshine to start properly
           echo "Waiting for Sunshine to fully start..."
           for i in {1..10}; do
-            if [ -n "$SUNSHINE_PID" ] && ps -p $SUNSHINE_PID > /dev/null; then
+            if ps -p $SUNSHINE_PID > /dev/null; then
               echo "✅ Sunshine process is running (PID: $SUNSHINE_PID)"
               
               # Check if it's listening on the port
@@ -411,7 +412,7 @@ jobs:
             fi
             
             # Check Sunshine
-            if [ -n "$SUNSHINE_PID" ] && ps -p $SUNSHINE_PID > /dev/null 2>&1; then
+            if ps -p $SUNSHINE_PID > /dev/null 2>&1; then
               echo "  Sunshine: Running (PID: $SUNSHINE_PID)" >> "$MONITOR_LOG"
             else
               echo "  Sunshine: Not running" >> "$MONITOR_LOG"
