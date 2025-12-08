@@ -1,449 +1,312 @@
-name: RustDesk with Screen Recording Permission
-
+name: Parsec Auto Login
 on:
   workflow_dispatch:
 
 jobs:
-  rustdesk-screenshots:
-    runs-on: macos-latest
-    timeout-minutes: 45
+  parsec:
+    runs-on: windows-latest
+    timeout-minutes: 30
 
     steps:
-      - name: Install RustDesk via Homebrew
+      - name: Setup directory
         run: |
-          echo "=== Installing RustDesk via Homebrew ==="
-          
-          if ! command -v brew &> /dev/null; then
-            echo "Installing Homebrew..."
-            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-            echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zshrc
-            eval "$(/opt/homebrew/bin/brew shellenv)"
-          fi
-          
-          brew install --cask rustdesk
-          echo "✅ RustDesk installed via Homebrew"
+          $workDir = "D:\a\SEB\SEB\parsec"
+          New-Item -ItemType Directory -Path $workDir -Force
+          Set-Location $workDir
+          echo "WORK_DIR=$workDir" >> $env:GITHUB_ENV
+          Write-Host "Working in: $workDir"
 
-      - name: Get Exact Display Resolution
+      - name: Download nircmd
         run: |
-          echo "=== Getting Exact Display Resolution ==="
-          
-          # Clean method to get resolution
-          RESOLUTION=$(osascript -e 'tell application "Finder" to get bounds of window of desktop' 2>/dev/null | awk -F', ' '{print $3 "x" $4}')
-          
-          if [ -z "$RESOLUTION" ] || [ "$RESOLUTION" = "0x0" ] || [ "$RESOLUTION" = "x" ]; then
-            # Try system_profiler with better parsing
-            RESOLUTION=$(system_profiler SPDisplaysDataType 2>/dev/null | grep -A1 "Resolution:" | tail -1 | tr -d ' ' | sed 's/[^0-9x]//g')
-          fi
-          
-          if [ -z "$RESOLUTION" ] || [ "$RESOLUTION" = "0x0" ] || [ "$RESOLUTION" = "x" ]; then
-            # Fallback to known GitHub Actions runner resolution
-            RESOLUTION="1024x768"
-            echo "⚠️ Using default GitHub Actions resolution: $RESOLUTION"
-          else
-            echo "Detected resolution: $RESOLUTION"
-          fi
-          
-          # Clean up the resolution string (remove commas, spaces, etc.)
-          RESOLUTION=$(echo "$RESOLUTION" | tr -d ',' | tr -d ' ')
-          
-          # Parse width and height safely
-          WIDTH=$(echo "$RESOLUTION" | cut -d'x' -f1)
-          HEIGHT=$(echo "$RESOLUTION" | cut -d'x' -f2)
-          
-          # Verify we got valid numbers
-          if ! [[ "$WIDTH" =~ ^[0-9]+$ ]] || ! [[ "$HEIGHT" =~ ^[0-9]+$ ]]; then
-            echo "⚠️ Invalid resolution detected, using defaults"
-            WIDTH="1024"
-            HEIGHT="768"
-            RESOLUTION="${WIDTH}x${HEIGHT}"
-          fi
-          
-          echo "Width: $WIDTH px"
-          echo "Height: $HEIGHT px"
-          
-          echo "RESOLUTION=$RESOLUTION" >> $GITHUB_ENV
-          echo "SCREEN_WIDTH=$WIDTH" >> $GITHUB_ENV
-          echo "SCREEN_HEIGHT=$HEIGHT" >> $GITHUB_ENV
-          
-          mkdir -p screenshots
-          echo "SCREENSHOT_DIR=$(pwd)/screenshots" >> $GITHUB_ENV
+          Write-Host "Downloading nircmd..."
+          $nircmdUrl = "https://www.nirsoft.net/utils/nircmd.zip"
+          $zipPath = "$env:TEMP\nircmd.zip"
+          Invoke-WebRequest -Uri $nircmdUrl -OutFile $zipPath
+          Expand-Archive -Path $zipPath -DestinationPath "$env:TEMP\nircmd_extract" -Force
+          $nircmdExe = Get-ChildItem -Path "$env:TEMP\nircmd_extract" -Filter "nircmd.exe" -Recurse | Select-Object -First 1
+          if ($nircmdExe) {
+              Copy-Item -Path $nircmdExe.FullName -Destination "$env:WORK_DIR\nircmd.exe" -Force
+              Write-Host "nircmd downloaded successfully"
+          }
 
-      - name: Start RustDesk and Wait for Permission Prompt
+      - name: Download and install Parsec
         run: |
-          echo "=== Starting RustDesk ==="
+          Write-Host "Downloading Parsec..."
+          $parsecUrl = "https://builds.parsec.app/package/parsec-windows.exe"
+          $parsecPath = "$env:WORK_DIR\parsec.exe"
+          Invoke-WebRequest -Uri $parsecUrl -OutFile $parsecPath
           
-          # Launch RustDesk
-          open -a /Applications/RustDesk.app
-          
-          echo "Waiting for RustDesk to start and permission prompt to appear..."
-          echo "This may take 10-15 seconds..."
-          
-          # Wait for RustDesk process
-          for i in {1..30}; do
-            if pgrep -f "RustDesk" > /dev/null; then
-              echo "✅ RustDesk process found (attempt $i)"
-              break
-            fi
-            sleep 1
-          done
-          
-          # Additional wait for permission dialog
-          sleep 15
-          
-          echo "RustDesk should be running now"
-          echo "Permission prompt should appear..."
+          Write-Host "Installing Parsec silently..."
+          Start-Process -FilePath $parsecPath -ArgumentList "/S" -Wait -NoNewWindow
+          Start-Sleep -Seconds 10
 
-      - name: Take Initial Screenshot (Before Click)
+      - name: Start Parsec
         run: |
-          echo "=== Taking Initial Screenshot (Before Permission Grant) ==="
+          Write-Host "Starting Parsec..."
           
-          timestamp=$(date +%Y%m%d_%H%M%S)
-          before_file="$SCREENSHOT_DIR/before_permission_$timestamp.png"
+          # Start Parsec
+          $parsecExePath = "C:\Program Files\Parsec\parsecd.exe"
+          if (Test-Path $parsecExePath) {
+              Start-Process $parsecExePath
+              Write-Host "Parsec started..."
+          }
           
-          screencapture -x "$before_file"
-          
-          if [ -f "$before_file" ]; then
-            filesize=$(ls -lh "$before_file" | awk '{print $5}')
-            echo "✅ Initial screenshot saved: $before_file ($filesize)"
-          else
-            echo "⚠️ Failed to take initial screenshot"
-          fi
+          Start-Sleep -Seconds 10
 
-      - name: Calculate Button Position
+      - name: Get screen resolution and calculate coordinates
         run: |
-          echo "=== Calculating Button Position ==="
+          Write-Host "=== GETTING SCREEN RESOLUTION ==="
           
-          # GitHub Actions runner resolution (from your screenshots)
-          ORIGINAL_WIDTH=1024
-          ORIGINAL_HEIGHT=768
-          ORIGINAL_X=462
-          ORIGINAL_Y=374
+          Add-Type -AssemblyName System.Windows.Forms
+          $screen = [System.Windows.Forms.Screen]::PrimaryScreen
+          $width = $screen.Bounds.Width
+          $height = $screen.Bounds.Height
           
-          echo "Original resolution: ${ORIGINAL_WIDTH}x${ORIGINAL_HEIGHT}"
-          echo "Current resolution: ${SCREEN_WIDTH}x${SCREEN_HEIGHT}"
-          echo "Original button position: (${ORIGINAL_X}, ${ORIGINAL_Y})"
+          Write-Host "Current screen resolution: ${width}x${height}"
           
-          # Calculate scaling factors using bc for precision
-          X_SCALE=$(echo "scale=2; $SCREEN_WIDTH / $ORIGINAL_WIDTH" | bc)
-          Y_SCALE=$(echo "scale=2; $SCREEN_HEIGHT / $ORIGINAL_HEIGHT" | bc)
+          # Original coordinates at 1089x862
+          $originalWidth = 1089
+          $originalHeight = 862
           
-          echo "Scaling factors: X=${X_SCALE}, Y=${Y_SCALE}"
-          
-          # Calculate new coordinates (round to nearest integer)
-          NEW_X=$(echo "$ORIGINAL_X * $X_SCALE" | bc | awk '{printf "%.0f", $1}')
-          NEW_Y=$(echo "$ORIGINAL_Y * $Y_SCALE" | bc | awk '{printf "%.0f", $1}')
-          
-          # Ensure coordinates are within screen bounds
-          if [ $NEW_X -lt 0 ]; then NEW_X=0; fi
-          if [ $NEW_X -gt $SCREEN_WIDTH ]; then NEW_X=$((SCREEN_WIDTH - 10)); fi
-          if [ $NEW_Y -lt 0 ]; then NEW_Y=0; fi
-          if [ $NEW_Y -gt $SCREEN_HEIGHT ]; then NEW_Y=$((SCREEN_HEIGHT - 10)); fi
-          
-          echo "Calculated button position: (${NEW_X}, ${NEW_Y})"
-          
-          echo "BUTTON_X=$NEW_X" >> $GITHUB_ENV
-          echo "BUTTON_Y=$NEW_Y" >> $GITHUB_ENV
-
-      - name: Click Allow Button (Fixed)
-        run: |
-          echo "=== Clicking Allow Button ==="
-          echo "Clicking at coordinates: ($BUTTON_X, $BUTTON_Y)"
-          
-          # Install cliclick for precise clicking
-          if ! command -v cliclick &> /dev/null; then
-            echo "Installing cliclick..."
-            brew install cliclick
-          fi
-          
-          # First, let's see what's on screen
-          echo "Taking screenshot before click..."
-          debug_before="$SCREENSHOT_DIR/debug_before_click_$(date +%H%M%S).png"
-          screencapture -x "$debug_before"
-          
-          # Click the Allow button using cliclick (most reliable)
-          echo "Clicking the button with cliclick..."
-          cliclick c:$BUTTON_X,$BUTTON_Y
-          
-          echo "✅ Click performed"
-          
-          # Wait for dialog to close
-          sleep 3
-          
-          # Take screenshot after click
-          echo "Taking screenshot after click..."
-          debug_after="$SCREENSHOT_DIR/debug_after_click_$(date +%H%M%S).png"
-          screencapture -x "$debug_after"
-          
-          # Alternative AppleScript method (fixed syntax)
-          echo "Trying AppleScript alternative..."
-          /usr/bin/osascript <<EOF
-          tell application "System Events"
-            delay 0.5
-            set xPos to $BUTTON_X
-            set yPos to $BUTTON_Y
-            click at {xPos, yPos}
-          end tell
-          EOF
-          
-          # Grant permissions via tccutil if possible
-          echo "Attempting to grant screen recording permission via TCC..."
-          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" "INSERT OR REPLACE INTO access VALUES('kTCCServiceScreenRecording','com.carriez.rustdesk',0,1,1,NULL,NULL,NULL,'UNUSED',NULL,0,UNIXEPOCH());" 2>/dev/null || echo "Note: May not have permission to modify TCC database"
-          
-          # Also try tccutil command
-          echo "Attempting tccutil command..."
-          sudo tccutil reset ScreenRecording com.carriez.rustdesk 2>/dev/null || true
-          
-          echo "✅ All click methods attempted"
-
-      - name: Take Verification Screenshots (Reduced to 2)
-        run: |
-          echo "=== Taking Verification Screenshots (Reduced to 2) ==="
-          
-          # Wait a bit for RustDesk to initialize
-          sleep 5
-          
-          # Take 2 verification screenshots (reduced from 5)
-          for i in {1..2}; do
-            echo ""
-            echo "📸 Taking verification screenshot $i/2..."
-            
-            timestamp=$(date +%Y%m%d_%H%M%S)
-            filepath="$SCREENSHOT_DIR/verification_${i}_${timestamp}.png"
-            
-            screencapture -x "$filepath"
-            
-            if [ -f "$filepath" ]; then
-              filesize=$(ls -lh "$filepath" | awk '{print $5}')
-              echo "✅ Saved: $(basename $filepath) ($filesize)"
-            else
-              echo "⚠️ Failed to take screenshot $i"
-            fi
-            
-            if [ $i -lt 2 ]; then
-              echo "   Waiting 2 seconds..."
-              sleep 2
-            fi
-          done
-          
-          # List all screenshots
-          echo ""
-          echo "=== All Screenshots So Far ==="
-          ls -la "$SCREENSHOT_DIR/" 2>/dev/null | head -15
-
-      - name: Additional UI Clicks (Extended Addon)
-        run: |
-          echo "=== Performing Additional UI Clicks (Extended) ==="
-          
-          # Calculate scaled coordinates for your requested clicks
-          # Original coordinates at 1024x768:
-          # 1: (210, 563), 2: (542, 293), 3: (820, 316), 4: (828, 313), 5: (543, 478)
-          
-          ORIGINAL_WIDTH=1024
-          ORIGINAL_HEIGHT=768
-          
-          # All click coordinates
-          ORIG_COORDS="210 563;542 293;820 316;828 313;543 478"
-          
-          echo "Original coordinates at ${ORIGINAL_WIDTH}x${ORIGINAL_HEIGHT}:"
+          # Original field coordinates
+          $originalEmailX = 455
+          $originalEmailY = 411
+          $originalPasswordX = 557
+          $originalPasswordY = 529
+          $originalLoginX = 537
+          $originalLoginY = 615
           
           # Calculate scaling factors
-          X_SCALE=$(echo "scale=2; $SCREEN_WIDTH / $ORIGINAL_WIDTH" | bc)
-          Y_SCALE=$(echo "scale=2; $SCREEN_HEIGHT / $ORIGINAL_HEIGHT" | bc)
+          $scaleX = $width / $originalWidth
+          $scaleY = $height / $originalHeight
           
-          # Process all coordinates
-          I=1
-          echo "$ORIG_COORDS" | tr ';' '\n' | while read -r coords; do
-            ORIG_X=$(echo "$coords" | awk '{print $1}')
-            ORIG_Y=$(echo "$coords" | awk '{print $2}')
-            
-            # Calculate scaled coordinates
-            SCALED_X=$(echo "$ORIG_X * $X_SCALE" | bc | awk '{printf "%.0f", $1}')
-            SCALED_Y=$(echo "$ORIG_Y * $Y_SCALE" | bc | awk '{printf "%.0f", $1}')
-            
-            echo "  Click $I: ($ORIG_X, $ORIG_Y) → ($SCALED_X, $SCALED_Y)"
-            
-            # Store in environment variables
-            echo "SCALED_X${I}=$SCALED_X" >> $GITHUB_ENV
-            echo "SCALED_Y${I}=$SCALED_Y" >> $GITHUB_ENV
-            
-            I=$((I + 1))
-          done
+          # Calculate new coordinates
+          $emailX = [math]::Round($originalEmailX * $scaleX)
+          $emailY = [math]::Round($originalEmailY * $scaleY)
+          $passwordX = [math]::Round($originalPasswordX * $scaleX)
+          $passwordY = [math]::Round($originalPasswordY * $scaleY)
+          $loginX = [math]::Round($originalLoginX * $scaleX)
+          $loginY = [math]::Round($originalLoginY * $scaleY)
           
-          echo ""
-          echo "Scaled coordinates at ${SCREEN_WIDTH}x${SCREEN_HEIGHT}:"
-          for i in {1..5}; do
-            var_x="SCALED_X$i"
-            var_y="SCALED_Y$i"
-            echo "  Click $i: (${!var_x}, ${!var_y})"
-          done
+          Write-Host "=== CALCULATED COORDINATES ==="
+          Write-Host "Email field: $emailX, $emailY"
+          Write-Host "Password field: $passwordX, $passwordY"
+          Write-Host "Login button: $loginX, $loginY"
           
-          # Ensure cliclick is installed
-          if ! command -v cliclick &> /dev/null; then
-            echo "Installing cliclick..."
-            brew install cliclick
-          fi
+          # Save coordinates to environment variable for next steps
+          echo "EMAIL_X=$emailX" >> $env:GITHUB_ENV
+          echo "EMAIL_Y=$emailY" >> $env:GITHUB_ENV
+          echo "PASSWORD_X=$passwordX" >> $env:GITHUB_ENV
+          echo "PASSWORD_Y=$passwordY" >> $env:GITHUB_ENV
+          echo "LOGIN_X=$loginX" >> $env:GITHUB_ENV
+          echo "LOGIN_Y=$loginY" >> $env:GITHUB_ENV
           
-          # Perform all 5 clicks
-          for i in {1..5}; do
-            var_x="SCALED_X$i"
-            var_y="SCALED_Y$i"
-            X_COORD=${!var_x}
-            Y_COORD=${!var_y}
-            
-            echo ""
-            echo "🔘 Performing click $i at ($X_COORD, $Y_COORD)..."
-            cliclick c:$X_COORD,$Y_COORD
-            echo "✅ Click $i completed"
-            
-            # Wait 2 seconds between clicks (except after last)
-            if [ $i -lt 5 ]; then
-              echo "⏳ Waiting 2 seconds..."
-              sleep 2
-            fi
-          done
-          
-          # Wait 2 seconds after last click as requested
-          echo ""
-          echo "⏳ Waiting 2 seconds after final click..."
-          sleep 2
-          
-          # Take screenshot after all additional clicks
-          echo ""
-          echo "📸 Taking screenshot after all additional clicks..."
-          addon_file="$SCREENSHOT_DIR/addon_after_5clicks_$(date +%Y%m%d_%H%M%S).png"
-          screencapture -x "$addon_file"
-          
-          if [ -f "$addon_file" ]; then
-            filesize=$(ls -lh "$addon_file" | awk '{print $5}')
-            echo "✅ Addon screenshot saved: $(basename $addon_file) ($filesize)"
-          else
-            echo "⚠️ Failed to take addon screenshot"
-          fi
-          
-          echo "=== Extended UI Clicks Completed ==="
+          # Take screenshot of current screen
+          Add-Type -AssemblyName System.Drawing
+          $bitmap = New-Object System.Drawing.Bitmap($width, $height)
+          $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+          $graphics.CopyFromScreen(0, 0, 0, 0, $bitmap.Size)
+          $bitmap.Save("$env:WORK_DIR\screen_resolution.png", [System.Drawing.Imaging.ImageFormat]::Png)
+          $graphics.Dispose()
+          $bitmap.Dispose()
 
-      - name: Upload All Screenshots
+      - name: PRECISE LOGIN with exact coordinates
+        run: |
+          Write-Host "=== PRECISE LOGIN WITH EXACT COORDINATES ==="
+          Write-Host "Using coordinates calculated from screen resolution"
+          Write-Host "Email: $env:EMAIL_X, $env:EMAIL_Y"
+          Write-Host "Password: $env:PASSWORD_X, $env:PASSWORD_Y"
+          Write-Host "Login: $env:LOGIN_X, $env:LOGIN_Y"
+          
+          if (Test-Path "$env:WORK_DIR\nircmd.exe") {
+              # Wait a bit for Parsec to be ready
+              Start-Sleep -Seconds 2
+              
+              # STEP 1: Click and type in EMAIL field
+              Write-Host "Step 1: Clicking email field..."
+              & "$env:WORK_DIR\nircmd.exe" setcursor $env:EMAIL_X $env:EMAIL_Y
+              Start-Sleep -Milliseconds 500
+              & "$env:WORK_DIR\nircmd.exe" sendmouse left dblclick
+              Start-Sleep -Seconds 1
+              
+              # Type email
+              Add-Type -AssemblyName System.Windows.Forms
+              Write-Host "Typing email: ffbewafa709@gmail.com"
+              [System.Windows.Forms.SendKeys]::SendWait("^a{DELETE}")
+              Start-Sleep -Milliseconds 500
+              [System.Windows.Forms.SendKeys]::SendWait("ffbewafa709@gmail.com")
+              Start-Sleep -Seconds 2
+              
+              # Screenshot after email
+              Add-Type -AssemblyName System.Drawing
+              $screen = [System.Windows.Forms.Screen]::PrimaryScreen
+              $width = $screen.Bounds.Width
+              $height = $screen.Bounds.Height
+              $bitmap = New-Object System.Drawing.Bitmap($width, $height)
+              $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+              $graphics.CopyFromScreen(0, 0, 0, 0, $bitmap.Size)
+              $bitmap.Save("$env:WORK_DIR\step1_email.png", [System.Drawing.Imaging.ImageFormat]::Png)
+              $graphics.Dispose()
+              $bitmap.Dispose()
+              
+              # STEP 2: Click and type in PASSWORD field
+              Write-Host "Step 2: Clicking password field..."
+              & "$env:WORK_DIR\nircmd.exe" setcursor $env:PASSWORD_X $env:PASSWORD_Y
+              Start-Sleep -Milliseconds 500
+              & "$env:WORKORD\nircmd.exe" sendmouse left dblclick
+              Start-Sleep -Seconds 1
+              
+              # Type password
+              Write-Host "Typing password: Hamza@123456"
+              [System.Windows.Forms.SendKeys]::SendWait("^a{DELETE}")
+              Start-Sleep -Milliseconds 500
+              [System.Windows.Forms.SendKeys]::SendWait("Hamza@123456")
+              Start-Sleep -Seconds 2
+              
+              # Screenshot after password
+              $bitmap = New-Object System.Drawing.Bitmap($width, $height)
+              $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+              $graphics.CopyFromScreen(0, 0, 0, 0, $bitmap.Size)
+              $bitmap.Save("$env:WORK_DIR\step2_password.png", [System.Drawing.Imaging.ImageFormat]::Png)
+              $graphics.Dispose()
+              $bitmap.Dispose()
+              
+              # STEP 3: Click LOGIN button
+              Write-Host "Step 3: Clicking login button..."
+              & "$env:WORK_DIR\nircmd.exe" setcursor $env:LOGIN_X $env:LOGIN_Y
+              Start-Sleep -Milliseconds 500
+              & "$env:WORK_DIR\nircmd.exe" sendmouse left click
+              & "$env:WORK_DIR\nircmd.exe" sendmouse left click  # Double click to be sure
+              Start-Sleep -Seconds 3
+              
+              # Also try pressing Enter as backup
+              Write-Host "Also trying Enter key..."
+              [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+              Start-Sleep -Seconds 2
+              
+              Write-Host "Precise login completed!"
+          }
+
+      - name: Alternative method with slight offsets
+        run: |
+          Write-Host "=== ALTERNATIVE: TRY WITH SLIGHT OFFSETS ==="
+          Start-Sleep -Seconds 5
+          
+          if (Test-Path "$env:WORK_DIR\nircmd.exe") {
+              Add-Type -AssemblyName System.Windows.Forms
+              Add-Type -AssemblyName System.Drawing
+              
+              $screen = [System.Windows.Forms.Screen]::PrimaryScreen
+              $width = $screen.Bounds.Width
+              $height = $screen.Bounds.Height
+              
+              # Try small offsets in case coordinates are slightly off
+              $offsets = @(-5, 0, 5)
+              
+              foreach ($xOffset in $offsets) {
+                  foreach ($yOffset in $offsets) {
+                      Write-Host "--- Trying offset X:$xOffset, Y:$yOffset ---"
+                      
+                      # Calculate offset coordinates
+                      $emailX_offset = $env:EMAIL_X + $xOffset
+                      $emailY_offset = $env:EMAIL_Y + $yOffset
+                      $passwordX_offset = $env:PASSWORD_X + $xOffset
+                      $passwordY_offset = $env:PASSWORD_Y + $yOffset
+                      $loginX_offset = $env:LOGIN_X + $xOffset
+                      $loginY_offset = $env:LOGIN_Y + $yOffset
+                      
+                      # Click email
+                      & "$env:WORK_DIR\nircmd.exe" setcursor $emailX_offset $emailY_offset
+                      Start-Sleep -Milliseconds 300
+                      & "$env:WORK_DIR\nircmd.exe" sendmouse left dblclick
+                      Start-Sleep -Seconds 1
+                      [System.Windows.Forms.SendKeys]::SendWait("^a{DELETE}ffbewafa709@gmail.com")
+                      Start-Sleep -Seconds 1
+                      
+                      # Click password
+                      & "$env:WORK_DIR\nircmd.exe" setcursor $passwordX_offset $passwordY_offset
+                      Start-Sleep -Milliseconds 300
+                      & "$env:WORK_DIR\nircmd.exe" sendmouse left dblclick
+                      Start-Sleep -Seconds 1
+                      [System.Windows.Forms.SendKeys]::SendWait("^a{DELETE}Hamza@123456")
+                      Start-Sleep -Seconds 1
+                      
+                      # Click login
+                      & "$env:WORK_DIR\nircmd.exe" setcursor $loginX_offset $loginY_offset
+                      Start-Sleep -Milliseconds 300
+                      & "$env:WORK_DIR\nircmd.exe" sendmouse left click
+                      Start-Sleep -Seconds 2
+                      
+                      # Screenshot
+                      $bitmap = New-Object System.Drawing.Bitmap($width, $height)
+                      $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+                      $graphics.CopyFromScreen(0, 0, 0, 0, $bitmap.Size)
+                      $bitmap.Save("$env:WORK_DIR\offset_x${xOffset}_y${yOffset}.png", [System.Drawing.Imaging.ImageFormat]::Png)
+                      $graphics.Dispose()
+                      $bitmap.Dispose()
+                      
+                      Write-Host "Offset X:$xOffset, Y:$yOffset completed"
+                      Start-Sleep -Seconds 2
+                  }
+              }
+          }
+
+      - name: Final verification
+        run: |
+          Write-Host "=== FINAL VERIFICATION ==="
+          Start-Sleep -Seconds 8
+          
+          # Take final screenshots
+          for ($i = 1; $i -le 5; $i++) {
+              Add-Type -AssemblyName System.Windows.Forms
+              Add-Type -AssemblyName System.Drawing
+              
+              $screen = [System.Windows.Forms.Screen]::PrimaryScreen
+              $bounds = $screen.Bounds
+              $bitmap = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)
+              $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+              $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+              
+              $fileName = "final_$i.png"
+              $bitmap.Save("$env:WORK_DIR\$fileName", [System.Drawing.Imaging.ImageFormat]::Png)
+              $graphics.Dispose()
+              $bitmap.Dispose()
+              
+              Write-Host "Final screenshot $i taken"
+              Start-Sleep -Seconds 1
+          }
+          
+          # Check Parsec
+          $parsecProcess = Get-Process | Where-Object { $_.ProcessName -like "*parsec*" }
+          Write-Host "=== PARSEC STATUS ==="
+          if ($parsecProcess) {
+              Write-Host "✓ Parsec is running"
+              $parsecProcess | Format-Table ProcessName, Id, MainWindowTitle -AutoSize
+              
+              # Check if logged in
+              $loggedIn = $parsecProcess | Where-Object { 
+                  $_.MainWindowTitle -ne "" -and 
+                  $_.MainWindowTitle -notlike "*Sign*" -and 
+                  $_.MainWindowTitle -notlike "*Login*" 
+              }
+              
+              if ($loggedIn) {
+                  Write-Host "✓ SUCCESS: Parsec appears to be logged in!"
+                  Write-Host "Window title: $($loggedIn.MainWindowTitle)"
+              } else {
+                  Write-Host "? Parsec running but might still be on login screen"
+              }
+          } else {
+              Write-Host "✗ Parsec is NOT running"
+          }
+          
+          # Show all created files
+          Write-Host "=== ALL FILES CREATED ==="
+          Get-ChildItem -Path $env:WORK_DIR | Select-Object Name, Length | Format-Table -AutoSize
+
+      - name: Upload results
         uses: actions/upload-artifact@v4
         with:
-          name: rustdesk-permission-screenshots
-          path: ${{ env.SCREENSHOT_DIR }}
+          name: parsec-results
+          path: D:\a\SEB\SEB\parsec\
           retention-days: 1
-
-      - name: Keep System Running for 20 Minutes
-        run: |
-          echo "=== Keeping System Running for 20 Minutes ==="
-          echo "Start time: $(date)"
-          echo "End time: $(date -v+20M)"
-          echo ""
-          echo "RustDesk should be working with screen recording permission"
-          echo "If the Allow button was clicked successfully, RustDesk should be functional"
-          echo ""
-          
-          # Create status file
-          STATUS_FILE="$SCREENSHOT_DIR/rustdesk_status.txt"
-          echo "RustDesk 20-Minute Monitoring Log" > "$STATUS_FILE"
-          echo "=================================" >> "$STATUS_FILE"
-          echo "Resolution: $RESOLUTION" >> "$STATUS_FILE"
-          echo "Allow button clicked at: ($BUTTON_X, $BUTTON_Y)" >> "$STATUS_FILE"
-          
-          # Log all additional clicks
-          for i in {1..5}; do
-            var_x="SCALED_X$i"
-            var_y="SCALED_Y$i"
-            echo "Additional click $i at: (${!var_x}, ${!var_y})" >> "$STATUS_FILE"
-          done
-          
-          echo "Start time: $(date)" >> "$STATUS_FILE"
-          echo "" >> "$STATUS_FILE"
-          
-          # Run for 20 minutes
-          for minute in {1..20}; do
-            current_time=$(date '+%H:%M:%S')
-            echo "[$current_time] Minute $minute/20"
-            echo "[$current_time] Minute $minute/20" >> "$STATUS_FILE"
-            
-            # Check RustDesk status
-            if pgrep -f "RustDesk" > /dev/null; then
-              echo "  ✅ RustDesk: Running"
-              echo "  RustDesk: Running" >> "$STATUS_FILE"
-              
-              # Take screenshot every 4 minutes
-              if [ $((minute % 4)) -eq 0 ]; then
-                runtime_file="$SCREENSHOT_DIR/runtime_${minute}min_$(date +%H%M%S).png"
-                if screencapture -x "$runtime_file" 2>/dev/null; then
-                  echo "  📸 Runtime screenshot taken"
-                  echo "  Screenshot at minute $minute" >> "$STATUS_FILE"
-                fi
-              fi
-            else
-              echo "  ⚠️ RustDesk: Not running"
-              echo "  RustDesk: Not running at minute $minute" >> "$STATUS_FILE"
-              
-              # Try to restart every 5 minutes if not running
-              if [ $((minute % 5)) -eq 0 ]; then
-                echo "  Attempting to restart RustDesk..."
-                open -a /Applications/RustDesk.app 2>/dev/null || true
-                echo "  RustDesk restart attempted" >> "$STATUS_FILE"
-              fi
-            fi
-            
-            # Display RustDesk window info occasionally
-            if [ $((minute % 3)) -eq 0 ]; then
-              echo "  Checking window state..."
-              window_info=$(osascript <<'EOF' 2>/dev/null || echo "Window check failed")
-              tell application "System Events"
-                try
-                  tell process "RustDesk"
-                    set windowCount to count of windows
-                    return "  Windows: " & windowCount
-                  end tell
-                on error
-                  return "  RustDesk window check failed"
-                end try
-              end tell
-              EOF
-              echo "$window_info"
-              echo "$window_info" >> "$STATUS_FILE"
-            fi
-            
-            echo "  Waiting 1 minute..."
-            echo "" >> "$STATUS_FILE"
-            sleep 60
-          done
-          
-          echo ""
-          echo "✅ 20-minute runtime completed at $(date)"
-          echo "End time: $(date)" >> "$STATUS_FILE"
-          
-          # Final status
-          echo ""
-          echo "=== Final Status ==="
-          echo "Total screenshots: $(find "$SCREENSHOT_DIR" -name "*.png" 2>/dev/null | wc -l)"
-          echo "RustDesk running: $(pgrep -f "RustDesk" > /dev/null && echo "Yes" || echo "No")"
-
-      - name: Upload Final Status
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: rustdesk-final-status
-          path: |
-            ${{ env.SCREENSHOT_DIR }}/rustdesk_status.txt
-            ${{ env.SCREENSHOT_DIR }}
-          retention-days: 1
-
-      - name: Final Cleanup
-        if: always()
-        run: |
-          echo "=== Final Cleanup ==="
-          
-          # Final screenshot
-          final_file="$SCREENSHOT_DIR/final_complete_$(date +%H%M%S).png"
-          screencapture -x "$final_file" 2>/dev/null && echo "✅ Final screenshot taken" || echo "⚠️ Could not take final screenshot"
-          
-          # Stop RustDesk
-          pkill -f "RustDesk" 2>/dev/null || true
-          sleep 2
-          
-          echo "✅ Cleanup complete"
-          echo "Total workflow time: ~25 minutes"
-          echo "Total screenshots captured: $(find "$SCREENSHOT_DIR" -name "*.png" 2>/dev/null | wc -l)"
