@@ -1,21 +1,28 @@
-name: sshx.io Connection with URL Capture
+name: Run sshx.io
 
 on:
   workflow_dispatch:
 
 jobs:
-  sshx-connection:
-    runs-on: ubuntu-latest
+  run-sshx:
+    runs-on: macos-latest
     timeout-minutes: 15
 
     steps:
-      - name: Run sshx.io and capture URL
+      - name: Run sshx.io
         run: |
           echo "=== Running sshx.io ==="
-          echo "The connection URL will appear below once sshx starts..."
-          echo "This workflow will remain active for up to 10 minutes."
-          echo ""
-          echo "Waiting for sshx.io connection..."
+          echo "Installing and connecting to sshx..."
           
-          # Run sshx - it will output the URL
+          # Run sshx.io command
           curl -sSf https://sshx.io/get | sh
+          
+      - name: Keep workflow running
+        run: |
+          echo "=== Keeping workflow alive ==="
+          echo "Waiting for 10 minutes..."
+          
+          # Wait for 600 seconds (10 minutes)
+          sleep 600
+          
+          echo "10 minutes have passed. Workflow complete."
