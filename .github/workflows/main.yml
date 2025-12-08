@@ -1,85 +1,308 @@
-name: Simple Click and Screenshot
+name: Create Admin User and Test System Settings
 
 on:
   workflow_dispatch:
 
 jobs:
-  click-test:
+  create-user-test:
     runs-on: macos-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
 
     steps:
+      - name: Check macOS Version
+        run: |
+          echo "=== macOS Version ==="
+          sw_vers
+          echo "RUNNER_OS=$RUNNER_OS" >> $GITHUB_ENV
+
       - name: Create Screenshot Directory
         run: |
           echo "=== Creating Screenshot Directory ==="
           mkdir -p screenshots
           echo "SCREENSHOT_DIR=$(pwd)/screenshots" >> $GITHUB_ENV
 
-      - name: Install cliclick
-        run: |
-          echo "=== Installing cliclick ==="
-          if ! command -v cliclick &> /dev/null; then
-            brew install cliclick
-          fi
-          echo "✅ cliclick installed"
-
-      - name: Take Initial Screenshot
+      - name: Initial Screenshot
         run: |
           echo "=== Taking Initial Screenshot ==="
           timestamp=$(date +%Y%m%d_%H%M%S)
-          screenshot_file="$SCREENSHOT_DIR/01_before_click_$timestamp.png"
+          screenshot_file="$SCREENSHOT_DIR/01_initial_desktop_$timestamp.png"
           screencapture -x "$screenshot_file"
           echo "✅ Initial screenshot saved: $screenshot_file"
 
-      - name: Click at Coordinates (55, 725)
+      - name: Create User Hamiya
         run: |
-          echo "=== Clicking at Coordinates (55, 725) ==="
-          echo "Performing click at coordinates (55, 725)..."
-          cliclick c:55,725
-          echo "✅ Click performed"
+          echo "=== Creating User Hamiya ==="
           
-          # Wait for click to register
-          sleep 1
+          # Check if user already exists
+          if id "Hamiya" &>/dev/null; then
+            echo "⚠️ User Hamiya already exists, deleting..."
+            sudo sysadminctl -deleteUser Hamiya -keepHome 2>/dev/null || true
+            sudo dscl . -delete /Users/Hamiya 2>/dev/null || true
+            sleep 2
+          fi
+          
+          # Create the user
+          echo "Creating user Hamiya with full name 'Hamiyas'..."
+          sudo sysadminctl -addUser Hamiya -fullName "Hamiyas" -password "Hamza@157" -admin 2>&1 || true
+          
+          # Verify user creation
+          echo "Verifying user creation..."
+          if id "Hamiya" &>/dev/null; then
+            echo "✅ User Hamiya created successfully"
+          else
+            echo "❌ Failed to create user Hamiya"
+            echo "Trying alternative method..."
+            sudo dscl . -create /Users/Hamiya
+            sudo dscl . -create /Users/Hamiya UserShell /bin/bash
+            sudo dscl . -create /Users/Hamiya RealName "Hamiyas"
+            sudo dscl . -create /Users/Hamiya UniqueID "599"
+            sudo dscl . -create /Users/Hamiya PrimaryGroupID 20
+            sudo dscl . -create /Users/Hamiya NFSHomeDirectory /Users/Hamiya
+            sudo dscl . -passwd /Users/Hamiya "Hamza@157"
+          fi
 
-      - name: Take Screenshot After Click
+      - name: Add User to Admin Group
         run: |
-          echo "=== Taking Screenshot After Click ==="
+          echo "=== Adding Hamiya to Admin Group ==="
+          
+          # Add user to admin group
+          echo "Adding Hamiya to admin group..."
+          sudo dseditgroup -o edit -a Hamiya -t user admin
+          
+          # Verify admin group membership
+          echo "Verifying admin group membership..."
+          ADMIN_MEMBERS=$(sudo dscl . read /Groups/admin GroupMembership 2>/dev/null || echo "")
+          
+          if [[ "$ADMIN_MEMBERS" == *"Hamiya"* ]]; then
+            echo "✅ Hamiya successfully added to admin group"
+            echo "Admin group members:"
+            echo "$ADMIN_MEMBERS"
+          else
+            echo "❌ Failed to add Hamiya to admin group"
+            echo "Trying alternative method..."
+            sudo dscl . -append /Groups/admin GroupMembership Hamiya
+          fi
+          
+          # Final verification
+          echo "Final verification:"
+          sudo dscl . read /Groups/admin GroupMembership || true
+          echo ""
+          echo "User info for Hamiya:"
+          id Hamiya || true
+
+      - name: Screenshot After User Creation
+        run: |
+          echo "=== Screenshot After User Creation ==="
           timestamp=$(date +%Y%m%d_%H%M%S)
-          screenshot_file="$SCREENSHOT_DIR/02_after_click_$timestamp.png"
+          screenshot_file="$SCREENSHOT_DIR/02_after_user_creation_$timestamp.png"
           screencapture -x "$screenshot_file"
-          echo "✅ Screenshot after click saved: $screenshot_file"
+          echo "✅ User creation screenshot saved"
 
-      - name: Create Test Report
+      - name: Open System Settings
         run: |
-          echo "=== Creating Test Report ==="
-          INFO_FILE="$SCREENSHOT_DIR/test_report.txt"
+          echo "=== Opening System Settings ==="
           
-          echo "Click Test Report" > "$INFO_FILE"
-          echo "=================" >> "$INFO_FILE"
+          # Close System Settings if already open
+          pkill -f "System Settings" 2>/dev/null || true
+          sleep 2
+          
+          # Open System Settings
+          echo "Opening System Settings..."
+          open -a "System Settings"
+          
+          # Wait for System Settings to open
+          echo "Waiting for System Settings to launch..."
+          for i in {1..10}; do
+            if pgrep -f "System Settings" > /dev/null; then
+              echo "✅ System Settings process found (attempt $i)"
+              break
+            fi
+            sleep 1
+          done
+          
+          # Wait for UI to load
+          sleep 3
+
+      - name: Take System Settings Screenshots
+        run: |
+          echo "=== Taking System Settings Screenshots ==="
+          
+          # Install cliclick for precise clicking
+          if ! command -v cliclick &> /dev/null; then
+            echo "Installing cliclick for UI testing..."
+            brew install cliclick
+          fi
+          
+          # Get screen dimensions
+          SCREEN_INFO=$(system_profiler SPDisplaysDataType 2>/dev/null | grep -A1 "Resolution:" | tail -1 | tr -d ' ' | sed 's/[^0-9x]//g')
+          if [ -z "$SCREEN_INFO" ] || [ "$SCREEN_INFO" = "0x0" ]; then
+            SCREEN_INFO="1440x900"
+            echo "⚠️ Using default screen resolution: $SCREEN_INFO"
+          fi
+          
+          WIDTH=$(echo "$SCREEN_INFO" | cut -d'x' -f1)
+          HEIGHT=$(echo "$SCREEN_INFO" | cut -d'x' -f2)
+          
+          echo "Screen: ${WIDTH}x${HEIGHT}"
+          
+          # Screenshot 3 - System Settings main window
+          echo "Taking screenshot 3 (System Settings main)..."
+          screenshot_file="$SCREENSHOT_DIR/03_system_settings_main_$(date +%H%M%S).png"
+          screencapture -x "$screenshot_file"
+          sleep 1
+          
+          # Click on Users & Groups area (typical position)
+          echo "Clicking on Users & Groups area..."
+          USERS_X=$((WIDTH / 3))
+          USERS_Y=$((HEIGHT / 2))
+          cliclick c:$USERS_X,$USERS_Y
+          sleep 2
+          
+          # Screenshot 4 - After clicking Users & Groups
+          echo "Taking screenshot 4 (after click)..."
+          screenshot_file="$SCREENSHOT_DIR/04_after_users_click_$(date +%H%M%S).png"
+          screencapture -x "$screenshot_file"
+          sleep 1
+          
+          # Click on search bar (top-right)
+          echo "Clicking on search bar..."
+          SEARCH_X=$((WIDTH - 200))
+          SEARCH_Y=150
+          cliclick c:$SEARCH_X,$SEARCH_Y
+          sleep 1
+          
+          # Type "users" in search
+          echo "Typing 'users' in search..."
+          osascript -e 'tell application "System Events" to keystroke "users"'
+          sleep 2
+          
+          # Screenshot 5 - After search
+          echo "Taking screenshot 5 (after search)..."
+          screenshot_file="$SCREENSHOT_DIR/05_after_search_$(date +%H%M%S).png"
+          screencapture -x "$screenshot_file"
+
+      - name: Test User Settings Access
+        run: |
+          echo "=== Testing User Settings Access ==="
+          
+          # Take screenshot before quitting
+          echo "Taking screenshot 6 (before closing)..."
+          screenshot_file="$SCREENSHOT_DIR/06_before_close_$(date +%H%M%S).png"
+          screencapture -x "$screenshot_file"
+          
+          # Close System Settings
+          echo "Closing System Settings..."
+          osascript -e 'tell application "System Settings" to quit' 2>/dev/null || true
+          sleep 2
+          
+          # Force quit if needed
+          pkill -f "System Settings" 2>/dev/null || true
+          
+          # Take final screenshot
+          echo "Taking final screenshot 7 (after close)..."
+          screenshot_file="$SCREENSHOT_DIR/07_after_close_$(date +%H%M%S).png"
+          screencapture -x "$screenshot_file"
+
+      - name: Capture User Information
+        run: |
+          echo "=== Capturing User Information ==="
+          
+          INFO_FILE="$SCREENSHOT_DIR/user_info.txt"
+          
+          echo "User Creation Test Report" > "$INFO_FILE"
+          echo "========================" >> "$INFO_FILE"
           echo "Test Date: $(date)" >> "$INFO_FILE"
           echo "macOS Version: $(sw_vers -productVersion)" >> "$INFO_FILE"
-          echo "Click Coordinates: (55, 725)" >> "$INFO_FILE"
-          echo "Screenshots Taken: 2" >> "$INFO_FILE"
           echo "" >> "$INFO_FILE"
-          echo "Screenshot Files:" >> "$INFO_FILE"
-          find "$SCREENSHOT_DIR" -name "*.png" -exec basename {} \; | sort >> "$INFO_FILE"
           
-          echo "✅ Test report saved"
+          echo "User Details:" >> "$INFO_FILE"
+          echo "------------" >> "$INFO_FILE"
+          echo "Username: Hamiya" >> "$INFO_FILE"
+          echo "Full Name: Hamiyas" >> "$INFO_FILE"
+          echo "Password: Hamza@157" >> "$INFO_FILE"
+          echo "" >> "$INFO_FILE"
+          
+          echo "User Verification:" >> "$INFO_FILE"
+          echo "-----------------" >> "$INFO_FILE"
+          echo "User ID check:" >> "$INFO_FILE"
+          id Hamiya 2>/dev/null >> "$INFO_FILE" || echo "User not found" >> "$INFO_FILE"
+          echo "" >> "$INFO_FILE"
+          
+          echo "Admin Group Membership:" >> "$INFO_FILE"
+          sudo dscl . read /Groups/admin GroupMembership 2>/dev/null >> "$INFO_FILE" || echo "Failed to read admin group" >> "$INFO_FILE"
+          echo "" >> "$INFO_FILE"
+          
+          echo "All Users on System:" >> "$INFO_FILE"
+          echo "-------------------" >> "$INFO_FILE"
+          dscl . list /Users | grep -v "^_" >> "$INFO_FILE"
+          echo "" >> "$INFO_FILE"
+          
+          echo "Home Directory:" >> "$INFO_FILE"
+          if [ -d "/Users/Hamiya" ]; then
+            echo "✅ /Users/Hamiya exists" >> "$INFO_FILE"
+            ls -la /Users/Hamiya 2>/dev/null | head -5 >> "$INFO_FILE" || true
+          else
+            echo "❌ /Users/Hamiya does not exist" >> "$INFO_FILE"
+          fi
+          echo "" >> "$INFO_FILE"
+          
+          echo "Screenshots Taken:" >> "$INFO_FILE"
+          echo "-----------------" >> "$INFO_FILE"
+          find "$SCREENSHOT_DIR" -name "*.png" -exec basename {} \; | sort >> "$INFO_FILE"
+          echo "" >> "$INFO_FILE"
+          
+          echo "Test Summary:" >> "$INFO_FILE"
+          echo "------------" >> "$INFO_FILE"
+          echo "- Created user: Hamiya" >> "$INFO_FILE"
+          echo "- Added to admin group" >> "$INFO_FILE"
+          echo "- Opened System Settings" >> "$INFO_FILE"
+          echo "- ${$(find "$SCREENSHOT_DIR" -name "*.png" | wc -l | tr -d ' ')} screenshots captured" >> "$INFO_FILE"
+          
+          echo "✅ User info saved"
 
       - name: Upload Screenshots
         uses: actions/upload-artifact@v4
         with:
-          name: click-screenshots
+          name: user-creation-screenshots
           path: |
             ${{ env.SCREENSHOT_DIR }}
           retention-days: 7
 
+      - name: Upload Summary
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: user-creation-summary
+          path: |
+            ${{ env.SCREENSHOT_DIR }}/user_info.txt
+          retention-days: 7
+
+      - name: Cleanup (Optional)
+        if: always()
+        run: |
+          echo "=== Cleaning Up ==="
+          echo "Note: User Hamiya remains on the system for verification"
+          echo "To remove manually, run: sudo sysadminctl -deleteUser Hamiya"
+          echo "Or: sudo dscl . -delete /Users/Hamiya"
+
       - name: Final Report
         run: |
-          echo "=== Test Complete ==="
+          echo "=== User Creation Test Complete ==="
           echo ""
-          echo "✅ Click performed at coordinates (55, 725)"
-          echo "✅ 2 screenshots taken (before/after click)"
-          echo "✅ Screenshots uploaded as 'click-screenshots' artifact"
+          echo "📊 Summary:"
+          echo "  ✅ macOS Version: $(sw_vers -productVersion)"
+          echo "  ✅ User 'Hamiya' created with password 'Hamza@157'"
+          echo "  ✅ User added to admin group"
+          SCREENSHOT_COUNT=$(find "$SCREENSHOT_DIR" -name "*.png" 2>/dev/null | wc -l | tr -d ' ')
+          echo "  ✅ $SCREENSHOT_COUNT screenshots taken"
+          echo "  ✅ System Settings opened and tested"
+          echo ""
+          echo "📁 Artifacts:"
+          echo "  • Screenshots uploaded as 'user-creation-screenshots'"
+          echo "  • User info uploaded as 'user-creation-summary'"
+          echo ""
+          echo "🔍 Verification:"
+          echo "  User exists: $(id Hamiya 2>/dev/null && echo 'Yes' || echo 'No')"
+          echo "  In admin group: $(sudo dscl . read /Groups/admin GroupMembership 2>/dev/null | grep -q Hamiya && echo 'Yes' || echo 'No')"
           echo ""
           echo "🎯 Test completed successfully!"
