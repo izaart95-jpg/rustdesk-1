@@ -199,7 +199,7 @@ jobs:
                 -- Try alternative method
                 keystroke "f" using {command down}
                 delay 1
-                keystroke "Users & Groups"
+                keystroke "Sharing"
                 delay 1
                 keystroke return
                 delay 2
