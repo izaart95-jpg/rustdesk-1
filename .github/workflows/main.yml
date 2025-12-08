@@ -254,24 +254,7 @@ jobs:
           echo ""
           echo "✅ All $SCREENSHOT_COUNT screenshots completed"
           
-      - name: Take Additional Context Screenshots
-        run: |
-          echo "=== Taking Additional Context Screenshots ==="
-          
-          # Full screen screenshot
-          full_file="$SCREENSHOT_DIR/full_screen_$(date +%H%M%S).png"
-          screencapture -x "$full_file"
-          echo "✅ Full screen: $(basename "$full_file")"
-          
-          # Window screenshot (try to capture just System Settings)
-          window_file="$SCREENSHOT_DIR/system_settings_window_$(date +%H%M%S).png"
-          screencapture -x -W "$window_file" 2>/dev/null || screencapture -x "$window_file"
-          echo "✅ Window capture: $(basename "$window_file")"
-          
-          # List all screenshots
-          echo ""
-          echo "=== All Screenshots in Directory ==="
-          ls -la "$SCREENSHOT_DIR/" | grep -E "\.(png|txt)$"
+    
           
       - name: Create Screenshot Report
         run: |
