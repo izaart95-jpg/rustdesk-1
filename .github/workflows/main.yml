@@ -230,114 +230,68 @@ jobs:
           echo "=== All Screenshots So Far ==="
           ls -la "$SCREENSHOT_DIR/" 2>/dev/null | head -15
 
-      - name: Additional UI Clicks (Fixed - No Environment Variables)
+           - name: Additional UI Clicks (Extended – Fixed)
         run: |
-          echo "=== Performing Additional UI Clicks (Fixed) ==="
-          
-          # Calculate scaled coordinates for your requested clicks
-          # Original coordinates at 1024x768:
-          # 1: (210, 563), 2: (542, 293), 3: (820, 316), 4: (828, 313), 5: (543, 478)
-          
+          echo "=== Performing Additional UI Clicks (Extended – FIXED) ==="
+
           ORIGINAL_WIDTH=1024
           ORIGINAL_HEIGHT=768
-          
-          # Store original coordinates
-          ORIG_COORDS=("210,563" "542,293" "820,316" "828,313" "543,478")
-          
-          echo "Original coordinates at ${ORIGINAL_WIDTH}x${ORIGINAL_HEIGHT}:"
-          
-          # Calculate scaling factors
-          X_SCALE=$(echo "scale=2; $SCREEN_WIDTH / $ORIGINAL_WIDTH" | bc)
-          Y_SCALE=$(echo "scale=2; $SCREEN_HEIGHT / $ORIGINAL_HEIGHT" | bc)
-          
-          echo "Scaling factors: X=${X_SCALE}, Y=${Y_SCALE}"
-          
-          # Calculate scaled coordinates
-          SCALED_COORDS=()
-          for i in {0..4}; do
-            ORIG_X=$(echo "${ORIG_COORDS[$i]}" | cut -d',' -f1)
-            ORIG_Y=$(echo "${ORIG_COORDS[$i]}" | cut -d',' -f2)
-            
-            SCALED_X=$(echo "$ORIG_X * $X_SCALE" | bc | awk '{printf "%.0f", $1}')
-            SCALED_Y=$(echo "$ORIG_Y * $Y_SCALE" | bc | awk '{printf "%.0f", $1}')
-            
-            SCALED_COORDS[$i]="${SCALED_X},${SCALED_Y}"
-            
-            echo "  Click $((i+1)): ($ORIG_X, $ORIG_Y) → ($SCALED_X, $SCALED_Y)"
-          done
-          
+
+          ORIG_X=(210 542 820 828 543)
+          ORIG_Y=(563 293 316 313 478)
+
+          echo "Screen width: $SCREEN_WIDTH"
+          echo "Screen height: $SCREEN_HEIGHT"
+
+          X_SCALE=$(echo "scale=4; $SCREEN_WIDTH / $ORIGINAL_WIDTH" | bc)
+          Y_SCALE=$(echo "scale=4; $SCREEN_HEIGHT / $ORIGINAL_HEIGHT" | bc)
+
+          echo "Scale: X=$X_SCALE  Y=$Y_SCALE"
+
+          # FIXED: Arrays that hold scaled coordinates for THIS step
+          SCALED_X=()
+          SCALED_Y=()
+
           echo ""
-          echo "Scaled coordinates at ${SCREEN_WIDTH}x${SCREEN_HEIGHT}:"
+          echo "Scaled coordinates (for this step):"
+
           for i in {0..4}; do
-            echo "  Click $((i+1)): (${SCALED_COORDS[$i]})"
+            sx=$(echo "${ORIG_X[$i]} * $X_SCALE" | bc | awk '{printf "%.0f"}')
+            sy=$(echo "${ORIG_Y[$i]} * $Y_SCALE" | bc | awk '{printf "%.0f"}')
+
+            SCALED_X+=("$sx")
+            SCALED_Y+=("$sy")
+
+            echo "  Click $((i+1)): (${ORIG_X[$i]}, ${ORIG_Y[$i]}) → ($sx, $sy)"
+
+            # export for later steps
+            echo "SCALED_X$((i+1))=$sx" >> $GITHUB_ENV
+            echo "SCALED_Y$((i+1))=$sy" >> $GITHUB_ENV
           done
-          
-          # Ensure cliclick is installed
+
           if ! command -v cliclick &> /dev/null; then
             echo "Installing cliclick..."
             brew install cliclick
           fi
-          
-          # Create coordinates file for monitoring step
-          COORDS_FILE="$SCREENSHOT_DIR/click_coordinates.txt"
-          echo "Additional Click Coordinates" > "$COORDS_FILE"
-          echo "============================" >> "$COORDS_FILE"
-          echo "Resolution: $RESOLUTION" >> "$COORDS_FILE"
-          
-          # Perform all 5 clicks
-          for i in {0..4}; do
-            X_COORD=$(echo "${SCALED_COORDS[$i]}" | cut -d',' -f1)
-            Y_COORD=$(echo "${SCALED_COORDS[$i]}" | cut -d',' -f2)
-            
-            echo "Click $((i+1)): ($X_COORD, $Y_COORD)" >> "$COORDS_FILE"
-            
-            echo ""
-            echo "🔘 Performing click $((i+1)) at ($X_COORD, $Y_COORD)..."
-            
-            # Try clicking
-            if cliclick c:$X_COORD,$Y_COORD; then
-              echo "✅ Click $((i+1)) completed"
-            else
-              echo "⚠️ Click $((i+1)) failed, trying alternative method..."
-              # Try alternative click method
-              /usr/bin/osascript <<EOF
-              tell application "System Events"
-                delay 0.1
-                click at {$X_COORD, $Y_COORD}
-              end tell
-              EOF
-              echo "✅ Click $((i+1)) attempted with AppleScript"
-            fi
-            
-            # Wait 2 seconds between clicks (except after last)
-            if [ $i -lt 4 ]; then
-              echo "⏳ Waiting 2 seconds..."
-              sleep 2
-            fi
-          done
-          
-          # Wait 2 seconds after last click as requested
+
           echo ""
-          echo "⏳ Waiting 2 seconds after final click..."
-          sleep 2
-          
-          # Take screenshot after all additional clicks
+          echo "=== Performing Clicks ==="
+
+          for i in {0..4}; do
+            cx=${SCALED_X[$i]}
+            cy=${SCALED_Y[$i]}
+
+            echo "🔘 Click $((i+1)) at ($cx, $cy)"
+            cliclick "c:$cx,$cy"
+            sleep 2
+          done
+
           echo ""
           echo "📸 Taking screenshot after all additional clicks..."
           addon_file="$SCREENSHOT_DIR/addon_after_5clicks_$(date +%Y%m%d_%H%M%S).png"
           screencapture -x "$addon_file"
-          
-          if [ -f "$addon_file" ]; then
-            filesize=$(ls -lh "$addon_file" | awk '{print $5}')
-            echo "✅ Addon screenshot saved: $(basename $addon_file) ($filesize)"
-          else
-            echo "⚠️ Failed to take addon screenshot"
-          fi
-          
+
           echo "=== Extended UI Clicks Completed ==="
-          
-          # Store coordinates as comma-separated string for monitoring step
-          echo "SCALED_COORDS_STR=${SCALED_COORDS[0]};${SCALED_COORDS[1]};${SCALED_COORDS[2]};${SCALED_COORDS[3]};${SCALED_COORDS[4]}" >> $GITHUB_ENV
 
       - name: Upload All Screenshots
         uses: actions/upload-artifact@v4
