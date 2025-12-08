@@ -1,89 +1,85 @@
-name: SSHX Session
+name: Simple Click and Screenshot
 
 on:
   workflow_dispatch:
 
 jobs:
-  sshx-session:
+  click-test:
     runs-on: macos-latest
-    timeout-minutes: 360
-    
-    env:
-      SSHX_SESSION_FILE: /tmp/sshx_output.txt
+    timeout-minutes: 5
 
     steps:
-      - name: Install sshx and show URL
+      - name: Create Screenshot Directory
         run: |
-          echo "=== Installing sshx ==="
-          curl -sSf https://sshx.io/get | sh
-          
-          echo ""
-          echo "=== Starting sshx session ==="
-          
-          # Run sshx and capture output to file
-          sshx 2>&1 | tee "$SSHX_SESSION_FILE" &
-          SSHX_PID=$!
-          
-          # Wait for sshx to start
-          sleep 10
-          
-          # Check if sshx is running
-          if ps -p $SSHX_PID > /dev/null 2>&1; then
-            echo "✅ sshx running with PID: $SSHX_PID"
-          else
-            echo "⚠️ sshx may have exited"
-          fi
-          
-          # Extract and show the sshx URL
-          echo ""
-          echo "=== SSHX Connection URL ==="
-          if [ -f "$SSHX_SESSION_FILE" ]; then
-            # Look for the sshx.io URL in the output
-            SSHX_URL=$(grep -o "https://sshx.io/[a-zA-Z0-9_-]\+" "$SSHX_SESSION_FILE" | head -1 || true)
-            if [ -n "$SSHX_URL" ]; then
-              echo "🔗 Connect via: $SSHX_URL"
-              echo "SSHX_URL=$SSHX_URL" >> $GITHUB_ENV
-            else
-              echo "⚠️ Could not extract SSHX URL from logs"
-              echo "Trying alternative patterns..."
-              
-              # Try different URL patterns
-              SSHX_URL=$(grep -o "sshx://[a-zA-Z0-9._-]\+" "$SSHX_SESSION_FILE" | head -1 || true)
-              if [ -n "$SSHX_URL" ]; then
-                echo "🔗 Connect via: $SSHX_URL"
-                echo "SSHX_URL=$SSHX_URL" >> $GITHUB_ENV
-              else
-                SSHX_URL=$(grep -o "sshx.io/[a-zA-Z0-9_-]\+" "$SSHX_SESSION_FILE" | head -1 || true)
-                if [ -n "$SSHX_URL" ]; then
-                  echo "🔗 Connect via: https://$SSHX_URL"
-                  echo "SSHX_URL=https://$SSHX_URL" >> $GITHUB_ENV
-                else
-                  echo "⚠️ Still no URL found"
-                  echo "=== Full sshx output ==="
-                  cat "$SSHX_SESSION_FILE" || true
-                fi
-              fi
-            fi
-          fi
-          
-      - name: Keep session alive
+          echo "=== Creating Screenshot Directory ==="
+          mkdir -p screenshots
+          echo "SCREENSHOT_DIR=$(pwd)/screenshots" >> $GITHUB_ENV
+
+      - name: Install cliclick
         run: |
-          echo "=== Keeping sshx session active ==="
-          echo "Session will stay active for 10 minutes..."
-          
-          # Check if sshx is still running
-          if [ -f "$SSHX_SESSION_FILE" ] && [ -n "$SSHX_PID" ] && ps -p $SSHX_PID > /dev/null 2>&1; then
-            echo "✅ sshx still running (PID: $SSHX_PID)"
-            if [ -n "$SSHX_URL" ]; then
-              echo "🔗 Connection URL: $SSHX_URL"
-            fi
-          else
-            echo "⚠️ sshx not running, starting new session..."
-            sshx 2>&1 | tee "$SSHX_SESSION_FILE" &
-            sleep 5
+          echo "=== Installing cliclick ==="
+          if ! command -v cliclick &> /dev/null; then
+            brew install cliclick
           fi
+          echo "✅ cliclick installed"
+
+      - name: Take Initial Screenshot
+        run: |
+          echo "=== Taking Initial Screenshot ==="
+          timestamp=$(date +%Y%m%d_%H%M%S)
+          screenshot_file="$SCREENSHOT_DIR/01_before_click_$timestamp.png"
+          screencapture -x "$screenshot_file"
+          echo "✅ Initial screenshot saved: $screenshot_file"
+
+      - name: Click at Coordinates (55, 725)
+        run: |
+          echo "=== Clicking at Coordinates (55, 725) ==="
+          echo "Performing click at coordinates (55, 725)..."
+          cliclick c:55,725
+          echo "✅ Click performed"
           
-          # Keep workflow running
-          echo "Waiting 6000 seconds..."
-          sleep 21600
-          echo "Session complete"
+          # Wait for click to register
+          sleep 1
+
+      - name: Take Screenshot After Click
+        run: |
+          echo "=== Taking Screenshot After Click ==="
+          timestamp=$(date +%Y%m%d_%H%M%S)
+          screenshot_file="$SCREENSHOT_DIR/02_after_click_$timestamp.png"
+          screencapture -x "$screenshot_file"
+          echo "✅ Screenshot after click saved: $screenshot_file"
+
+      - name: Create Test Report
+        run: |
+          echo "=== Creating Test Report ==="
+          INFO_FILE="$SCREENSHOT_DIR/test_report.txt"
+          
+          echo "Click Test Report" > "$INFO_FILE"
+          echo "=================" >> "$INFO_FILE"
+          echo "Test Date: $(date)" >> "$INFO_FILE"
+          echo "macOS Version: $(sw_vers -productVersion)" >> "$INFO_FILE"
+          echo "Click Coordinates: (55, 725)" >> "$INFO_FILE"
+          echo "Screenshots Taken: 2" >> "$INFO_FILE"
+          echo "" >> "$INFO_FILE"
+          echo "Screenshot Files:" >> "$INFO_FILE"
+          find "$SCREENSHOT_DIR" -name "*.png" -exec basename {} \; | sort >> "$INFO_FILE"
+          
+          echo "✅ Test report saved"
+
+      - name: Upload Screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: click-screenshots
+          path: |
+            ${{ env.SCREENSHOT_DIR }}
+          retention-days: 7
+
+      - name: Final Report
+        run: |
+          echo "=== Test Complete ==="
+          echo ""
+          echo "✅ Click performed at coordinates (55, 725)"
+          echo "✅ 2 screenshots taken (before/after click)"
+          echo "✅ Screenshots uploaded as 'click-screenshots' artifact"
+          echo ""
+          echo "🎯 Test completed successfully!"
