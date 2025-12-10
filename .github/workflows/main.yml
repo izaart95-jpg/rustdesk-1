@@ -1,4 +1,4 @@
-name: Parsec Auto Login
+name: Parsec Auto Lgin
 
 on:
   workflow_dispatch:
