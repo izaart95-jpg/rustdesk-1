@@ -60,13 +60,13 @@ jobs:
           Start-Sleep -Seconds 20
           echo "Parsec installed"
 
-      - name: Run AutoHotkey script
+      - name: Run AHK then take screenshots for 1 minute
         shell: powershell
         run: |
           $ahkUX = "C:\Program Files\AutoHotkey\UX\AutoHotkeyUX.exe"
           $ahkV2 = "C:\Program Files\AutoHotkey\v2\AutoHotkey.exe"
           
-          # Start Parsec first
+          # Start Parsec
           Start-Process "parsec:" -ErrorAction SilentlyContinue
           Start-Sleep -Seconds 5
           
@@ -83,57 +83,38 @@ jobs:
               Write-Host "AutoHotkey NOT FOUND!"
           }
           
-          Write-Host "AutoHotkey script started at $(Get-Date)"
-
-      - name: Wait 1 minute - DO NOTHING
-        shell: powershell
-        run: |
-          Write-Host "=== WAITING 1 MINUTE - DOING NOTHING ==="
-          Write-Host "Started waiting at: $(Get-Date)"
-          Start-Sleep -Seconds 60
-          Write-Host "Finished waiting at: $(Get-Date)"
-          Write-Host "========================================="
-
-      - name: Take screenshots every 30 seconds for 6 hours
-        shell: powershell
-        run: |
-          Write-Host "=== STARTING SCREENSHOT CAPTURE ==="
-          Write-Host "Screenshots will be saved to: $env:SCREENSHOT_DIR"
-          Write-Host "Interval: 30 seconds"
-          Write-Host "===================================="
+          Write-Host "=== AHK STARTED - NOW TAKING SCREENSHOTS FOR 1 MINUTE ==="
           
           $startTime = Get-Date
           $count = 0
           
-          while ((New-TimeSpan -Start $startTime -End (Get-Date)).TotalHours -lt 6) {
-              $timestamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
-              $filename = "$env:SCREENSHOT_DIR\screenshot_$($count.ToString('D4'))_$timestamp.png"
+          # Take screenshots for 60 seconds only
+          while ((New-TimeSpan -Start $startTime -End (Get-Date)).TotalSeconds -lt 60) {
+              $timestamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss-fff"
+              $filename = "$env:SCREENSHOT_DIR\ss_$($count.ToString('D3'))_$timestamp.png"
               
-              # Take screenshot
               & $env:NIRCMD_PATH savescreenshot $filename
-              
-              Write-Host "[$(Get-Date)] Screenshot #$count saved: $filename"
+              Write-Host "[$count] Screenshot: $filename"
               $count++
               
-              Start-Sleep -Seconds 30
+              Start-Sleep -Seconds 5
           }
           
-          Write-Host "=== SCREENSHOT CAPTURE COMPLETE ==="
-          Write-Host "Total screenshots taken: $count"
+          Write-Host "=== SCREENSHOT CAPTURE DONE - $count screenshots taken ==="
 
-      - name: List screenshots
-        if: always()
+      - name: Keep alive for 6 hours (doing nothing)
         shell: powershell
         run: |
-          Write-Host "=== SCREENSHOT SUMMARY ==="
-          $screenshots = Get-ChildItem -Path $env:SCREENSHOT_DIR -Filter "*.png" -ErrorAction SilentlyContinue
-          Write-Host "Total screenshots: $($screenshots.Count)"
-          Write-Host ""
-          Write-Host "First 10 screenshots:"
-          $screenshots | Select-Object -First 10 | Format-Table Name, Length, LastWriteTime
-          Write-Host ""
-          Write-Host "Last 10 screenshots:"
-          $screenshots | Select-Object -Last 10 | Format-Table Name, Length, LastWriteTime
+          Write-Host "=== KEEPING WORKFLOW ALIVE ==="
+          Write-Host "No more actions - just waiting"
+          Write-Host "Parsec and AHK are running in background"
+          Write-Host "==============================="
+          
+          $startTime = Get-Date
+          while ((New-TimeSpan -Start $startTime -End (Get-Date)).TotalHours -lt 6) {
+              Write-Host "[$(Get-Date)] Still alive..."
+              Start-Sleep -Seconds 600
+          }
 
       - name: Upload screenshots
         if: always()
