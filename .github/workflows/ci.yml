@@ -1,4 +1,4 @@
-name: Parsec AutoHotkey Automation
+name: Parsec AutoHotkey Automation with Screenshots
 
 on:
   workflow_dispatch:
@@ -45,49 +45,60 @@ jobs:
           Start-Sleep -Seconds 20
           echo "Parsec installed"
 
-      - name: Run AutoHotkey script
+      - name: Download NirCmd
+        shell: powershell
+        run: |
+          $nircmdUrl = "https://www.nirsoft.net/utils/nircmd-x64.zip"
+          $nircmdZip = "$env:WORK_DIR\nircmd.zip"
+          $nircmdDir = "$env:WORK_DIR\nircmd"
+          Invoke-WebRequest -Uri $nircmdUrl -OutFile $nircmdZip
+          Expand-Archive -Path $nircmdZip -DestinationPath $nircmdDir -Force
+          echo "NirCmd downloaded and extracted"
+
+      - name: Run AutoHotkey script and take screenshots
         shell: powershell
         run: |
           $ahkUX = "C:\Program Files\AutoHotkey\UX\AutoHotkeyUX.exe"
           $ahkV2 = "C:\Program Files\AutoHotkey\v2\AutoHotkey.exe"
+          $nircmdExe = "$env:WORK_DIR\nircmd\nircmd.exe"
 
           # Start Parsec first
           Start-Process "parsec:" -ErrorAction SilentlyContinue
           Start-Sleep -Seconds 5
 
+          # Start AHK
           if (Test-Path $ahkUX) {
-              Start-Process -FilePath $ahkUX -ArgumentList "`"$env:AHK_SCRIPT_PATH`""
-          }
-          elseif (Test-Path $ahkV2) {
-              Start-Process -FilePath $ahkV2 -ArgumentList "`"$env:AHK_SCRIPT_PATH`""
-          }
-          else {
+              $ahkProcess = Start-Process -FilePath $ahkUX -ArgumentList "`"$env:AHK_SCRIPT_PATH`"" -PassThru
+          } elseif (Test-Path $ahkV2) {
+              $ahkProcess = Start-Process -FilePath $ahkV2 -ArgumentList "`"$env:AHK_SCRIPT_PATH`"" -PassThru
+          } else {
               Write-Host "AutoHotkey NOT FOUND!"
+              exit 1
           }
-
           Write-Host "AutoHotkey script started"
+
+          # Take screenshots every 5 seconds for 45 seconds
+          $screenshotsDir = "$env:WORK_DIR\screenshots"
+          New-Item -ItemType Directory -Path $screenshotsDir -Force
+          for ($i=0; $i -lt 9; $i++) {
+              $screenshotFile = "$screenshotsDir\screenshot_$i.png"
+              & $nircmdExe savescreenshot $screenshotFile
+              Start-Sleep -Seconds 5
+          }
+          Write-Host "Screenshots taken in $screenshotsDir"
+
+      - name: Upload screenshots as artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: parsec-screenshots
+          path: ${{ env.WORK_DIR }}/screenshots
 
       - name: Keep workflow running for 6 hours
         shell: powershell
         run: |
-          Write-Host "=== Parsec AutoHotkey Automation ==="
-          Write-Host "AutoHotkey script is running"
-          Write-Host "Parsec should be installed and configured"
-          Write-Host "Workflow will run for 6 hours or until manually cancelled"
-          Write-Host "====================================="
-
           $startTime = Get-Date
           while ((New-TimeSpan -Start $startTime -End (Get-Date)).TotalHours -lt 6) {
-              Write-Host "[$(Get-Date)] Still running... (Ctrl+C in workflow to terminate)"
-              Start-Sleep -Seconds 300  # Check every 5 minutes
+              Write-Host "[$(Get-Date)] Workflow still running..."
+              Start-Sleep -Seconds 300
           }
-
           Write-Host "6-hour limit reached, workflow completed"
-
-      - name: List files for debugging
-        if: always()
-        shell: powershell
-        run: |
-          Write-Host "Current directory: $(Get-Location)"
-          Write-Host "Contents of work directory:"
-          Get-ChildItem -Path $env:WORK_DIR -Recurse -ErrorAction SilentlyContinue | Format-Table Name, Length, LastWriteTime
