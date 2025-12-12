@@ -10,6 +10,7 @@ jobs:
 
     steps:
       - name: Create working directory
+        shell: powershell
         run: |
           $workDir = "$env:GITHUB_WORKSPACE\parsec-automation"
           New-Item -ItemType Directory -Path $workDir -Force
@@ -17,89 +18,75 @@ jobs:
           echo "WORK_DIR=$workDir" >> $env:GITHUB_ENV
 
       - name: Download and install AutoHotkey v2
+        shell: powershell
         run: |
-          $ahkUrl = "https://www.autohotkey.com/download/ahk-v2.exe"
+          $ahkUrl = "https://download1532.mediafire.com/b2tq21p9107gms-k4vnD6bn3k7M902vy5S_DuEF3GtbJBBoEXwoPU3aPS0ss4AsReX7Ia-9jtHqDKhVK2iZs6TzEwDC-4sR4zbfe7FT0eqIPCav_T1Hkdj0Bmli1vVzU2cFm4IkTcmaepV04qN5LFK6H2w9kQkGzgXfCDeo-q9tGqmc/tob6736a61vcdph/AutoHotkey_2.0.19_setup.exe"
           $ahkPath = "$env:WORK_DIR\ahk-v2.exe"
           Invoke-WebRequest -Uri $ahkUrl -OutFile $ahkPath
-          
-          # Install AutoHotkey silently
           Start-Process -FilePath $ahkPath -ArgumentList "/silent" -Wait
           echo "AutoHotkey installed"
 
-      - name: Create AutoHotkey script
+      - name: Download AutoHotkey script
+        shell: powershell
         run: |
+          $scriptUrl = "https://download1324.mediafire.com/wl4maomsy7zgrw7Zb3L_XP0WSGurFboLAPv9RJV3Zg0V6XDqMoo9wAKPaFE9aDMjTNLtL72qPxB5OSuXSEUZbALIThPG0hNpWiMcCzylNZAUjR9f_WCv_rguJ9Ei-wnd9LxvDa_IP8OjZY5AEv94FJYz-lyUA6amzFeVouLoi80-naQ/dia57ollssbenug/scri%27%2B%27pt.ahk"
           $scriptPath = "$env:WORK_DIR\script.ahk"
-          @"
-Sleep 3000
-Send "ffbewafa709@gmail.com"
-Sleep 1000
-Send "{Tab}"
-Sleep 1000
-Send "Hamza@123456" 
-Sleep 1000
-Send "{Enter}"
-Sleep 30000
-Send "{Enter}"
-"@ | Out-File -FilePath $scriptPath -Encoding utf8
-          
+          Invoke-WebRequest -Uri $scriptUrl -OutFile $scriptPath
           echo "AHK_SCRIPT_PATH=$scriptPath" >> $env:GITHUB_ENV
-          Write-Host "Created AHK script at: $scriptPath"
+          Write-Host "Downloaded AHK script to: $scriptPath"
 
       - name: Download and install Parsec
+        shell: powershell
         run: |
           $parsecUrl = "https://builds.parsec.app/package/parsec-windows.exe"
           $parsecPath = "$env:WORK_DIR\parsec-windows.exe"
           Invoke-WebRequest -Uri $parsecUrl -OutFile $parsecPath
-          
-          # Install Parsec silently
           Start-Process -FilePath $parsecPath -ArgumentList "/S" -Wait
-          echo "Parsec installed"
           Start-Sleep -Seconds 20
+          echo "Parsec installed"
 
       - name: Run AutoHotkey script
+        shell: powershell
         run: |
-          # Find AutoHotkey executable
-          $ahkExe = "C:\Program Files\AutoHotkey\UX\AutoHotkeyUX.exe"
-          
-          if (Test-Path $ahkExe) {
-              Write-Host "Found AutoHotkey at: $ahkExe"
-              Write-Host "Running script: $env:AHK_SCRIPT_PATH"
-              
-              # Run the AHK script
-              Start-Process -FilePath $ahkExe -ArgumentList "`"$env:AHK_SCRIPT_PATH`""
-          } else {
-              Write-Host "AutoHotkey not found in Program Files. Searching..."
-              # Try alternative locations
-              $ahkExeAlt = Get-ChildItem "C:\" -Recurse -Filter "AutoHotkeyUX.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-              if ($ahkExeAlt) {
-                  Start-Process -FilePath $ahkExeAlt.FullName -ArgumentList "`"$env:AHK_SCRIPT_PATH`""
-              } else {
-                  Write-Host "ERROR: AutoHotkey not found!"
-              }
-          }
-          
-          Write-Host "AutoHotkey script started"
+          $ahkUX = "C:\Program Files\AutoHotkey\UX\AutoHotkeyUX.exe"
+          $ahkV2 = "C:\Program Files\AutoHotkey\v2\AutoHotkey.exe"
+
+          # Start Parsec first
+          Start-Process "parsec:" -ErrorAction SilentlyContinue
           Start-Sleep -Seconds 5
 
+          if (Test-Path $ahkUX) {
+              Start-Process -FilePath $ahkUX -ArgumentList "`"$env:AHK_SCRIPT_PATH`""
+          }
+          elseif (Test-Path $ahkV2) {
+              Start-Process -FilePath $ahkV2 -ArgumentList "`"$env:AHK_SCRIPT_PATH`""
+          }
+          else {
+              Write-Host "AutoHotkey NOT FOUND!"
+          }
+
+          Write-Host "AutoHotkey script started"
+
       - name: Keep workflow running for 6 hours
+        shell: powershell
         run: |
           Write-Host "=== Parsec AutoHotkey Automation ==="
           Write-Host "AutoHotkey script is running"
           Write-Host "Parsec should be installed and configured"
           Write-Host "Workflow will run for 6 hours or until manually cancelled"
           Write-Host "====================================="
-          
-          # Keep the workflow alive for 6 hours
+
           $startTime = Get-Date
           while ((New-TimeSpan -Start $startTime -End (Get-Date)).TotalHours -lt 6) {
               Write-Host "[$(Get-Date)] Still running... (Ctrl+C in workflow to terminate)"
               Start-Sleep -Seconds 300  # Check every 5 minutes
           }
-          
+
           Write-Host "6-hour limit reached, workflow completed"
 
       - name: List files for debugging
         if: always()
+        shell: powershell
         run: |
           Write-Host "Current directory: $(Get-Location)"
           Write-Host "Contents of work directory:"
