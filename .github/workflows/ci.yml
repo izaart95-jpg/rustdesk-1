@@ -32,43 +32,46 @@ jobs:
           echo "NIRCMD_PATH=$nircmdPath" >> $env:GITHUB_ENV
           Write-Host "NirCmd installed at: $nircmdPath"
 
-      - name: Download and install AutoHotkey v2 (Official)
+      - name: Download and install AutoHotkey v2
         shell: powershell
         run: |
-          # Download from official AutoHotkey GitHub releases
           $ahkUrl = "https://github.com/AutoHotkey/AutoHotkey/releases/download/v2.0.19/AutoHotkey_2.0.19_setup.exe"
           $ahkPath = "$env:WORK_DIR\AutoHotkey_Setup.exe"
           
           Write-Host "Downloading AutoHotkey from official source..."
           Invoke-WebRequest -Uri $ahkUrl -OutFile $ahkPath -UseBasicParsing
           
-          # Verify file is valid
           $fileInfo = Get-Item $ahkPath
           Write-Host "Downloaded file size: $($fileInfo.Length) bytes"
           
-          if ($fileInfo.Length -lt 1000000) {
-              Write-Host "ERROR: File too small, download may have failed"
-              exit 1
-          }
-          
-          # Install silently
           Write-Host "Installing AutoHotkey..."
           Start-Process -FilePath $ahkPath -ArgumentList "/silent" -Wait
           
           Write-Host "AutoHotkey installed successfully"
 
-      - name: Download AutoHotkey script
+      - name: Create AutoHotkey script
         shell: powershell
         run: |
-          $scriptUrl = "https://download1324.mediafire.com/wl4maomsy7zgrw7Zb3L_XP0WSGurFboLAPv9RJV3Zg0V6XDqMoo9wAKPaFE9aDMjTNLtL72qPxB5OSuXSEUZbALIThPG0hNpWiMcCzylNZAUjR9f_WCv_rguJ9Ei-wnd9LxvDa_IP8OjZY5AEv94FJYz-lyUA6amzFeVouLoi80-naQ/dia57ollssbenug/scri%27%2B%27pt.ahk"
-          $scriptPath = "$env:WORK_DIR\script.ahk"
-          Invoke-WebRequest -Uri $scriptUrl -OutFile $scriptPath
-          echo "AHK_SCRIPT_PATH=$scriptPath" >> $env:GITHUB_ENV
-          Write-Host "Downloaded AHK script to: $scriptPath"
+          $scriptContent = @'
+          Sleep 3000
+          Send "ffbewafa709@gmail.com"
+          Sleep 1000
+          Send "{Tab}"
+          Sleep 1000
+          Send "Hamza@123456"
+          Sleep 1000
+          Send "{Enter}"
+          Sleep 30000
+          Send "{Enter}"
+          '@
           
-          # Show script content for debugging
+          $scriptPath = "$env:WORK_DIR\script.ahk"
+          $scriptContent | Out-File -FilePath $scriptPath -Encoding UTF8
+          echo "AHK_SCRIPT_PATH=$scriptPath" >> $env:GITHUB_ENV
+          
+          Write-Host "Created AHK script at: $scriptPath"
           Write-Host "Script content:"
-          Get-Content $scriptPath -ErrorAction SilentlyContinue | Select-Object -First 20
+          Get-Content $scriptPath
 
       - name: Download and install Parsec
         shell: powershell
@@ -85,8 +88,8 @@ jobs:
         run: |
           $ahkUX = "C:\Program Files\AutoHotkey\UX\AutoHotkeyUX.exe"
           $ahkV2 = "C:\Program Files\AutoHotkey\v2\AutoHotkey.exe"
-          $ahk32 = "C:\Program Files\AutoHotkey\v2\AutoHotkey32.exe"
           $ahk64 = "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe"
+          $ahk32 = "C:\Program Files\AutoHotkey\v2\AutoHotkey32.exe"
           
           # Start Parsec
           Start-Process "parsec:" -ErrorAction SilentlyContinue
@@ -105,7 +108,7 @@ jobs:
               Write-Host "AHK script started"
           }
           else {
-              Write-Host "AutoHotkey NOT FOUND! Listing Program Files:"
+              Write-Host "AutoHotkey NOT FOUND!"
               Get-ChildItem "C:\Program Files\AutoHotkey" -Recurse -ErrorAction SilentlyContinue
           }
           
@@ -127,9 +130,18 @@ jobs:
           
           Write-Host "=== DONE - $count screenshots taken ==="
 
+      - name: Upload screenshots NOW
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots-${{ github.run_id }}
+          path: ${{ env.SCREENSHOT_DIR }}
+          retention-days: 7
+          if-no-files-found: warn
+
       - name: Keep alive for 6 hours
         shell: powershell
         run: |
+          Write-Host "=== SCREENSHOTS UPLOADED ==="
           Write-Host "=== KEEPING WORKFLOW ALIVE ==="
           Write-Host "Parsec and AHK running in background"
           Write-Host "==============================="
@@ -139,12 +151,3 @@ jobs:
               Write-Host "[$(Get-Date)] Still alive..."
               Start-Sleep -Seconds 600
           }
-
-      - name: Upload screenshots
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: screenshots-${{ github.run_id }}
-          path: ${{ env.SCREENSHOT_DIR }}
-          retention-days: 7
-          if-no-files-found: warn
